@@ -1,0 +1,42 @@
+### GENERAL
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+.supported
+
+# common code editors
+.atom/
+.vscode/
+
+# JetBrains IDEs
+# see https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+# ignore everything except the files that are useful to others when sharing
+.idea/*
+!.idea/codeStyles/
+!.idea/inspectionProfiles/
+!.idea/runConfigurations/
+!.idea/dataSources.xml
+!.idea/encodings.xml
+!.idea/jsonSchemas.xml
+!.idea/*.iml
+!.idea/misc.xml
+!.idea/modules.xml
+!.idea/vcs.xml
+!.idea/watcherTasks.xml
+
+# common files
+*.log
+
+# local-only files (may be useful during development)
+*.local.*
+*.local
+
+
+### PROJECT
+
+# CLion CMake build output
+/cmake-build-*

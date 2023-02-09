@@ -1,0 +1,3 @@
+Record=TopLevelDocument|FileName=PDU_Schematic.SchDoc|SheetNumber=1
+Record=SheetSymbol|SourceDocument=PDU_Schematic.SchDoc|Designator=Ouster DCDC|SchDesignator=Ouster DCDC|FileName=12V DCDC.SchDoc|SheetNumber=2|SymbolType=Normal|RawFileName=12V DCDC.SchDoc|DesignItemId= |SourceLibraryName= |ObjectKind=Sheet Symbol|RevisionGUID= |ItemGUID= |VaultGUID= 
+Record=SheetSymbol|SourceDocument=PDU_Schematic.SchDoc|Designator=Velodyne_DCDC|SchDesignator=Velodyne_DCDC|FileName=12V DCDC.SchDoc|SheetNumber=2|SymbolType=Normal|RawFileName=12V DCDC.SchDoc|DesignItemId= |SourceLibraryName= |ObjectKind=Sheet Symbol|RevisionGUID= |ItemGUID= |VaultGUID= 
