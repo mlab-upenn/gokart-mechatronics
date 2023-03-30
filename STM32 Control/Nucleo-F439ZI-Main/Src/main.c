@@ -258,15 +258,17 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		  acc_percent = 1.00;
 	  }
 
-	  speed_desired = acc_percent * speed_maximum;
+//	  speed_desired = acc_percent * speed_maximum;
+//
+//	  if (speed_desired < 0.0 && speed_desired < 1.0){
+//		  speed_desired = 1.0;
+//	  }
+//
+//	  float throttle = get_throttle();
+//
+//	  TIM1->CCR1 = 138 - 138 * throttle * 1.0;
 
-	  if (speed_desired < 0.0 && speed_desired < 1.0){
-		  speed_desired = 1.0;
-	  }
-
-	  float throttle = get_throttle();
-
-	  TIM1->CCR1 = 138 - 138 * throttle * 1.0;
+	  TIM1->CCR1 = 138 - 138 * acc_percent * acc_limit;
 
 	  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 

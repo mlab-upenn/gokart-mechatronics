@@ -12,9 +12,9 @@ int SPEKTRUM_THROTTLE_MIN = 330;
 int SPEKTRUM_THROTTLE_MAX = 1701;
 int SPEKTRUM_THROTTLE_NEUTRAL = 994;
 
-int SPEKTRUM_STEER_MIN = 364;
-int SPEKTRUM_STEER_MAX = 1713;
-int SPEKTRUM_STEER_NEUTRAL = 1028;
+int SPEKTRUM_STEER_MIN = 411;
+int SPEKTRUM_STEER_MAX = 1762;
+int SPEKTRUM_STEER_NEUTRAL = 1072;
 
 #define JOY_STEERING_INDEX 1
 #define JOY_THROTTLE_INDEX 0
@@ -26,10 +26,10 @@ static void joy_steer_to_steer(app_state_t *app){
 
 	if (joy_steer > SPEKTRUM_STEER_NEUTRAL){
 		float steering_percent = ((float) joy_steer - (float)SPEKTRUM_STEER_NEUTRAL) / ((float)SPEKTRUM_STEER_MAX - (float)SPEKTRUM_STEER_NEUTRAL);
-		app->steering_angle = steering_percent * GOKART_STEER_MAX + GOKART_STEER_MAX - 2;
+		app->steering_angle = steering_percent * GOKART_STEER_MAX + GOKART_STEER_MAX;
 	} else{
 		float steering_percent = ((float) SPEKTRUM_STEER_NEUTRAL - (float)joy_steer) / ((float)SPEKTRUM_STEER_NEUTRAL - (float)SPEKTRUM_STEER_MIN);
-		app->steering_angle = -steering_percent * GOKART_STEER_MAX + GOKART_STEER_MAX - 2;
+		app->steering_angle = -steering_percent * GOKART_STEER_MAX + GOKART_STEER_MAX;
 	}
 }
 

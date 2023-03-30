@@ -92,8 +92,7 @@ float error = 0.0;
 float error_prev = 0.0;
 
 float error_multiplier = 1.0;
-//float current_multiplier = 4.5;
-float current_multiplier = 4.0;
+float current_multiplier = 1.0;
 
 float kp_e = 0.12;
 float kd_e = 2.80;

@@ -79,15 +79,20 @@ uint8_t RxData[8];
 
 uint8_t vesc_packet[10];
 
-int brake = 0;
+int count = 0;
+int count_max = 15;
+
+float brake_pressure = 0.0;
+float brake_pressure_max = 500.0;
+
+float brake_pressure_avg = 0.0;
+float brake_pressure_sum = 0.0;
+
+float brake_voltage = 0.0;
+float brake_voltage_max = 5.0;
+float brake_voltage_min = 1.0;
+
 int brake_command = 0;
-
-int powerOff = 0;
-int powerOffCount = 0;
-
-int powerStop = 0;
-int powerStopCount = 0;
-
 
 int _write(int file, char *ptr, int len){
 	HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, HAL_MAX_DELAY);
@@ -176,58 +181,28 @@ int main(void)
 
 	  HAL_ADC_Start(&hadc1);
 	  HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
-	  brake = HAL_ADC_GetValue(&hadc1);
 
-	  printf("brake value %d \r\n", brake);
-	  printf("brake command %d \r\n", brake_command);
+	  // reference adc reading [0-4095], reference voltage [0-3.3v]
+	  // however, empirical test show that 3.7v gives more accurate reading
+	  brake_voltage = HAL_ADC_GetValue(&hadc1) / 4095.0 * 3.7;
+	  brake_pressure = (brake_voltage - brake_voltage_min) / (brake_voltage_max - brake_voltage_min) * brake_pressure_max;
 
-	  if (brake_command == -1){
-		  if (powerOff){
-			  HAL_GPIO_WritePin(GPIOA, LA_Direction_1_Pin, GPIO_PIN_RESET);
-			  HAL_GPIO_WritePin(GPIOA, LA_Direction_2_Pin, GPIO_PIN_RESET);
-		  } else{
-			  HAL_GPIO_WritePin(GPIOA, LA_Direction_1_Pin, GPIO_PIN_SET);
-			  HAL_GPIO_WritePin(GPIOA, LA_Direction_2_Pin, GPIO_PIN_RESET);
-		  }
+	  brake_pressure_sum += brake_pressure;
+	  count += 1;
 
-		  if (brake < 150){
-			  powerOffCount += 1;
+	  if (count == count_max){
+		  brake_pressure_avg = brake_pressure_sum / count_max;
 
-			  if (powerOffCount > 10){
-				  powerOff = 1;
-			  }
-		  }
+		  count = 0;
+		  brake_pressure_sum = 0.0;
 
-		  powerStop = 0;
-		  powerStopCount = 0;
-
-	  } else if (brake_command == 0){
-		  HAL_GPIO_WritePin(GPIOA, LA_Direction_1_Pin, GPIO_PIN_RESET);
-		  HAL_GPIO_WritePin(GPIOA, LA_Direction_2_Pin, GPIO_PIN_RESET);
+		  printf("brake pressure is %.2f PSI \r\n", brake_pressure_avg);
+		  printf("brake command %d \r\n", brake_command);
 	  }
-	  else{
-		  if (powerStop){
-			  HAL_GPIO_WritePin(GPIOA, LA_Direction_1_Pin, GPIO_PIN_RESET);
-			  HAL_GPIO_WritePin(GPIOA, LA_Direction_2_Pin, GPIO_PIN_RESET);
-		  } else{
-			  HAL_GPIO_WritePin(GPIOA, LA_Direction_1_Pin, GPIO_PIN_RESET);
-			  HAL_GPIO_WritePin(GPIOA, LA_Direction_2_Pin, GPIO_PIN_SET);
-		  }
 
-		  if (brake > 600){
-			  powerStopCount += 1;
-
-			  if (powerStopCount > 10){
-				  powerStop = 1;
-			  }
-		  }
-
-		  powerOff = 0;
-		  powerOffCount = 0;
-	  }
+	  HAL_Delay(10);
 
     /* USER CODE END WHILE */
-
 
     /* USER CODE BEGIN 3 */
   }
@@ -330,7 +305,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_10;
+  sConfig.Channel = ADC_CHANNEL_9;
   sConfig.Rank = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5;
   sConfig.SingleDiff = ADC_SINGLE_ENDED;
