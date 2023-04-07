@@ -6,7 +6,7 @@
 #include "utils.h"
 #include "endianness.h"
 
-float GOKART_STEER_MAX = 60.0;
+float GOKART_STEER_MAX = 55.0;
 
 int SPEKTRUM_THROTTLE_MIN = 330;
 int SPEKTRUM_THROTTLE_MAX = 1701;

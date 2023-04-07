@@ -80,13 +80,14 @@ uint8_t RxData[8];
 uint8_t vesc_packet[10];
 
 int count = 0;
-int count_max = 15;
+int count_max = 25;
 
-float brake_pressure = 0.0;
+float brake_measured = 0.0;
+float brake_empirical_max = 150.0;
 float brake_pressure_max = 500.0;
 
-float brake_pressure_avg = 0.0;
-float brake_pressure_sum = 0.0;
+float brake_measured_avg = 0.0;
+float brake_measured_sum = 0.0;
 
 float brake_voltage = 0.0;
 float brake_voltage_max = 5.0;
@@ -108,13 +109,73 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
 
   if ((RxHeader.StdId == 0x104))
   {
-	  brake_command = RxData[1] - 1;
+	  brake_command = RxData[1];
   }
 }
 
-// Timer interrupt every 20ms (frequency = 50Hz)
+// Timer interrupt every 25ms (frequency = 40Hz)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-//	printf("timer interrupt \r\n");
+  float brake_desired = brake_command / 100.0 * brake_empirical_max;
+  float brake_error = brake_measured_avg - brake_desired;
+
+  if(brake_desired < 15.0 && brake_measured_avg < 15.0){
+	  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_RESET);
+	  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_RESET);
+	  TIM1->CCR1 = 0;
+	  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+
+	  printf("No brake steady state \r\n");
+	  return;
+  }
+
+  if(brake_desired > 135.0 && brake_measured_avg > 135.0){
+	  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_RESET);
+	  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_RESET);
+	  TIM1->CCR1 = 0;
+	  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+
+	  printf("Maximum brake effort reached \r\n");
+	  return;
+  }
+
+  if(brake_error > -5.0 && brake_error < 5.0){
+	  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_RESET);
+	  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_RESET);
+	  TIM1->CCR1 = 0;
+	  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+
+	  printf("brake pressure measured: %.2f PSI \r\n", brake_measured_avg);
+	  printf("brake pressure desired: %.2f PSI \r\n", brake_desired);
+	  printf("reached target state");
+	  return;
+  }
+
+  if(brake_error > 0.0){
+	  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_RESET);
+	  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_SET);
+  } else{
+	  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_SET);
+	  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_RESET);
+  }
+
+  int duty_cycle;
+
+  if(brake_error > 0.0){
+	  duty_cycle = (int)(brake_error * 20.0);
+  } else{
+	  duty_cycle = 400;
+  }
+
+  if(duty_cycle > 400){
+	  duty_cycle = 400;
+  }
+
+  TIM1->CCR1 = duty_cycle;
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+
+  printf("brake pressure measured: %.2f PSI \r\n", brake_measured_avg);
+  printf("brake pressure desired: %.2f PSI \r\n", brake_desired);
+  printf("current duty cycle: %d \r\n", duty_cycle);
 }
 
 /* USER CODE END 0 */
@@ -176,31 +237,23 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  TIM1->CCR1 = 400;
-	  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-
 	  HAL_ADC_Start(&hadc1);
 	  HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
 
 	  // reference adc reading [0-4095], reference voltage [0-3.3v]
 	  // however, empirical test show that 3.7v gives more accurate reading
 	  brake_voltage = HAL_ADC_GetValue(&hadc1) / 4095.0 * 3.7;
-	  brake_pressure = (brake_voltage - brake_voltage_min) / (brake_voltage_max - brake_voltage_min) * brake_pressure_max;
+	  brake_measured = (brake_voltage - brake_voltage_min) / (brake_voltage_max - brake_voltage_min) * brake_pressure_max;
 
-	  brake_pressure_sum += brake_pressure;
+	  brake_measured_sum += brake_measured;
 	  count += 1;
 
 	  if (count == count_max){
-		  brake_pressure_avg = brake_pressure_sum / count_max;
+		  brake_measured_avg = brake_measured_sum / count_max;
 
 		  count = 0;
-		  brake_pressure_sum = 0.0;
-
-		  printf("brake pressure is %.2f PSI \r\n", brake_pressure_avg);
-		  printf("brake command %d \r\n", brake_command);
+		  brake_measured_sum = 0.0;
 	  }
-
-	  HAL_Delay(10);
 
     /* USER CODE END WHILE */
 
@@ -463,7 +516,7 @@ static void MX_TIM6_Init(void)
   htim6.Instance = TIM6;
   htim6.Init.Prescaler = 16-1;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 20000;
+  htim6.Init.Period = 25000;
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
   {
@@ -531,13 +584,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, LA_Direction_1_Pin|LA_Direction_2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, Motor1_Pin|Motor2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : LA_Direction_1_Pin LA_Direction_2_Pin */
-  GPIO_InitStruct.Pin = LA_Direction_1_Pin|LA_Direction_2_Pin;
+  /*Configure GPIO pins : Motor1_Pin Motor2_Pin */
+  GPIO_InitStruct.Pin = Motor1_Pin|Motor2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;

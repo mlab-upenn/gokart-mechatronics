@@ -81,7 +81,7 @@ float speed_error_int = 0.0;
 float wheel_diameter = 0.27; // meters
 
 float acc_percent;
-float acc_limit = 0.5;
+float acc_limit = 1.0;
 
 app_state_t app;
 app_state_t *main_app;
@@ -196,7 +196,7 @@ float get_throttle(){
 	speed_error = speed_desired - speed_measured;
 
 	if (speed_error < 0.0){
-		speed_error_int += 0.5 * speed_error;
+		speed_error_int += 0.05 * speed_error;
 	} else{
 		speed_error_int += speed_error;
 	}
@@ -217,9 +217,12 @@ float get_throttle(){
 
 	if (throttle < 0.0){
 		return 0.0;
-	} else{
-		return throttle;
 	}
+	if (throttle > acc_limit){
+		throttle = acc_limit;
+	}
+
+	return throttle;
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
@@ -240,14 +243,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	  // get remote control speed
 	  acc_percent = app.acc_percent;
 
-	  if (acc_percent < -0.6){
+	  if(acc_percent > -0.05){
 		  CAN_TxData[1] = (int)0;
-	  }
-	  if (acc_percent >= -0.6 && acc_percent < -0.2){
-		  CAN_TxData[1] = (int)1;
-	  }
-	  if (acc_percent >= -0.2){
-		  CAN_TxData[1] = (int)2;
+	  } else{
+		  CAN_TxData[1] = (int)(-acc_percent * 100.0);
 	  }
 
 	  if (acc_percent < 0.00){
@@ -258,24 +257,17 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		  acc_percent = 1.00;
 	  }
 
-//	  speed_desired = acc_percent * speed_maximum;
-//
-//	  if (speed_desired < 0.0 && speed_desired < 1.0){
-//		  speed_desired = 1.0;
-//	  }
-//
+//	  speed_desired = speed_maximum * acc_percent;
 //	  float throttle = get_throttle();
-//
-//	  TIM1->CCR1 = 138 - 138 * throttle * 1.0;
 
-	  TIM1->CCR1 = 138 - 138 * acc_percent * acc_limit;
+	  TIM1->CCR1 = 145 - 145 * acc_percent * acc_limit;
 
 	  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
 	  // send steer command over can bus
 	  CAN_TxData[0] = (int)app.steering_angle;
 
-	  // printf("acceleration %.2f" nl, acc_percent);
+	   printf("acceleration %.2f" nl, acc_percent * acc_limit);
 	  // printf("steering angle desired %d \r\n", CAN_TxData[0]);
 
 	  HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
