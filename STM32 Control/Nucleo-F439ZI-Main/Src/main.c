@@ -72,7 +72,7 @@ float angular_accum = 0.0;
 
 float speed_measured = 0.0;
 float speed_desired = 0.0;
-float speed_maximum = 8.0;
+float speed_maximum = 6.0;
 
 float speed_error = 0.0;
 float speed_error_pre = 0.0;
@@ -81,7 +81,6 @@ float speed_error_int = 0.0;
 float wheel_diameter = 0.27; // meters
 
 float acc_percent;
-float acc_limit = 1.0;
 
 app_state_t app;
 app_state_t *main_app;
@@ -191,56 +190,48 @@ void handle_gokart_info(){
 }
 
 float get_throttle(){
-	float speed_ki = 0.003;
-
-	speed_error = speed_desired - speed_measured;
-
-	if (speed_error < 0.0){
-		speed_error_int += 0.05 * speed_error;
-	} else{
-		speed_error_int += speed_error;
-	}
-
-	if (speed_error_int > 120.0){
-		speed_error_int = 120.0;  // limit the max throttle to 36%
-	}
+	float speed_ki = 0.005;
 
 	if (speed_desired == 0.0){
 		speed_error_int = 0.0;  // clear the velocity integration
+		return speed_ki * speed_error_int;
+	}
+
+	speed_error_int += (speed_desired - speed_measured);
+	speed_error_int *= 0.999;
+
+	if (speed_error_int > 200.0){
+		speed_error_int = 200.0;
+	}
+	if (speed_error_int < 0.0){
+		speed_error_int = 0.0;
 	}
 
 	float throttle = speed_ki * speed_error_int;
 
 	printf("speed desired %.2f \r\n", speed_desired);
 	printf("speed measured %.2f \r\n", speed_measured);
+	printf("speed error integration %.2f \r\n", speed_error_int);
 	printf("throttle %.2f \r\n\n", throttle);
-
-	if (throttle < 0.0){
-		return 0.0;
-	}
-	if (throttle > acc_limit){
-		throttle = acc_limit;
-	}
 
 	return throttle;
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	// Timer 10 is triggered every 50ms or 20Hz
+	// counter 168Mz (clock) / 672 (prescaler) / 25000 (counter) = 10Hz (100ms);
 	if (htim == &htim10){
-		speed_measured = angular_accum / 360.0 * wheel_diameter * 3.14 / 0.05;
+		speed_measured = angular_accum / 360.0 * wheel_diameter * 3.14 / 0.1;
 		angular_accum = 0.0;
 	}
 
-	// Timer 7 is triggered every 20ms or 50Hz
+	// counter 168Mz (clock) / 168 (prescaler) / 20000 (counter) = 50Hz (20ms);
 	if (htim == &htim7){
-//	    send_gokart_info(CAN_TxData[0] + 100 - 60, (int)(app.acc_percent*100) + 100, CAN_TxData[1] + 100);
-//	    handle_gokart_info();
+	    // send_gokart_info(CAN_TxData[0] + 100 - 60, (int)(app.acc_percent*100) + 100, CAN_TxData[1] + 100);
+	    // handle_gokart_info();
 	}
 
-	// Timer 6 is triggered every 20ms or 50Hz
+	// counter 168Mz (clock) / 168 (prescaler) / 20000 (counter) = 50Hz (20ms);
 	if (htim == &htim6) {
-	  // get remote control speed
 	  acc_percent = app.acc_percent;
 
 	  if(acc_percent > -0.05){
@@ -257,18 +248,17 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		  acc_percent = 1.00;
 	  }
 
-//	  speed_desired = speed_maximum * acc_percent;
-//	  float throttle = get_throttle();
+	  speed_desired = speed_maximum * acc_percent;
+	  float throttle = get_throttle();
 
-	  TIM1->CCR1 = 145 - 145 * acc_percent * acc_limit;
-
+	  TIM1->CCR1 = 145 - (int)(145.0 * throttle);
 	  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
 	  // send steer command over can bus
 	  CAN_TxData[0] = (int)app.steering_angle;
 
-	   printf("acceleration %.2f" nl, acc_percent * acc_limit);
-	  // printf("steering angle desired %d \r\n", CAN_TxData[0]);
+	  //printf("acceleration %.2f" nl, acc_percent);
+	  //printf("steering angle desired %d \r\n", CAN_TxData[0]);
 
 	  HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
   }
@@ -335,7 +325,8 @@ int main(void)
 
   av_com_start_receiving(&huart6);
 
-  HAL_Delay(200);
+  // Wait time to initialize everything
+  HAL_Delay(500);
 
   /* USER CODE END 2 */
 
@@ -349,7 +340,6 @@ int main(void)
 		  angular_accum += 36.0; // 10 magnets (36 degrees per gap)
 		  speed_sensor_pre = speed_sensor_val;
 	  }
-//	  debug_printf("wheel speed sensor %d \r\n", temp);
   }
     /* USER CODE END WHILE */
 
@@ -720,9 +710,9 @@ static void MX_TIM10_Init(void)
 
   /* USER CODE END TIM10_Init 1 */
   htim10.Instance = TIM10;
-  htim10.Init.Prescaler = 168-1;
+  htim10.Init.Prescaler = 672-1;
   htim10.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim10.Init.Period = 50000;
+  htim10.Init.Period = 25000;
   htim10.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim10.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim10) != HAL_OK)

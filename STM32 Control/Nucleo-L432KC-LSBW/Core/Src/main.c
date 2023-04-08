@@ -91,29 +91,25 @@ uint8_t vesc_packet[10];
 float error = 0.0;
 float error_prev = 0.0;
 
+// for multi-surface friction
 float error_multiplier = 1.0;
-float current_multiplier = 1.0;
 
-float kp_e = 0.12;
-float kd_e = 2.80;
+// different params for left turn, right turn, and centering
+float current_multiplier;
 
-float kp_v = 0.02;
+float kp_e = 0.06;
+float kd_e = 1.20;
+
+float kp_v = 0.025;
 
 float vel = 0.0;
-float vel_pre = 0.0;
-float vel_limit = 150.0;
-//////////////////////////////////////////////////////////////////////////////////////
+float vel_limit = 120.0;
+
+double steer_prev = 0.0;
 double steer_measured = 0.0;
 double steer_desired = 0.0;
 
-double steer_prev = 0.0;
-double steer_pred = 0.0;
-
-//float steer_offset = 156.2;
 float steer_offset = -20.9;
-
-float cycle_time = 0.05;
-float look_ahead_time = 0.50;
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
 {
@@ -166,20 +162,18 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		    steer_measured = wrap_to_pi(steer_measured);
 	    }
 
-	    steer_desired = (double)(RxData[0] - 60.0);
+	    steer_desired = -(double)(RxData[0] - 55.0);
 	    steer_desired = wrap_to_pi(steer_desired);
 
 	    steer_prev = steer_measured;
-	    steer_pred = steer_measured;
 
-	    error = steer_desired - steer_pred;
+	    error = steer_desired - steer_measured;
 
 	    if (error > -1.0 && error < 1.0){
 	    	error = 0.0;
 	    }
 
-	    vel += (error * kp_e + (error - error_prev) * kd_e) * current_multiplier;
-
+	    vel += (error * kp_e + (error - error_prev) * kd_e) * error_multiplier;
 	    error_prev = error;
 
 	    if (vel > vel_limit){
@@ -190,15 +184,20 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	    	vel = -vel_limit;
 	    }
 
-	    if (abs_value(steer_desired) < 5.0 && abs_value(steer_measured) > 10.0){
-	    	vel *= 0.90;
-	    } else{
-			vel *= 0.985;
+	    if (steer_desired > 0.0 && steer_desired > steer_measured){
+	    	vel *= 0.98;
+	    	current_multiplier = 4.0;
+	    }
+	    else if(steer_desired < 0.0 && steer_desired < steer_measured){
+	    	vel *= 0.97;
+	    	current_multiplier = 5.0;
+	    }
+	    else{
+	    	vel *= 0.98;
+	    	current_multiplier = 3.0;
 	    }
 
 	    float current = kp_v * vel * current_multiplier;
-
-	    vel_pre = vel;
 
 		vesc_set_current(vesc_packet, (float)current);
 		HAL_UART_Transmit(VESC_UART, vesc_packet, sizeof(vesc_packet), 2);
