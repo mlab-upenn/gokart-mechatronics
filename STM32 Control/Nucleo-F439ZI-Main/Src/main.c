@@ -22,9 +22,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <uart_serial.h>
 #include "app.h"
-#include "av_com.h"
-
 #include "terminal.h"
 #include "utils.h"
 #include "endianness.h"
@@ -93,9 +92,9 @@ uint32_t TxMailbox;
 uint8_t CAN_TxData[8];
 uint8_t CAN_RxData[8];
 
-char UART_TxData[3];
+char UART_TxData[6];
 
-uint16_t steer_av, throttle_av, brake_av;
+float steer_av, speed_av;
 
 /* USER CODE END PV */
 
@@ -150,28 +149,24 @@ int Debug_UART_Get_Byte() {
 	return -1;
 }
 
-void send_gokart_info(int steer, int throttle, int brake){
-	  char info_steer[10];
-	  char info_throt[10];
-	  char info_brake[10];
+void send_gokart_info(float steer, float speed, float brake){
+	  char info_steer[13];
+	  char info_speed[12];
 
-	  char info_out[30];
+	  char info_out[25];
 
 	  char steer_name[] = "steer ";
-	  char throt_name[] = "throt ";
-	  char brake_name[] = "brake ";
+	  char speed_name[] = "speed ";
 	  char space[] = " ";
+	  char place_holder[] = "";
 
-	  sprintf(UART_TxData, "%d", steer);
-	  mergearray(steer_name, UART_TxData, space, info_steer, 6, 3, 1);
+	  sprintf(UART_TxData, "%.2f", steer);
+	  mergearray(steer_name, UART_TxData, space, info_steer, 6, 6, 1);
 
-	  sprintf(UART_TxData, "%d", throttle);
-	  mergearray(throt_name, UART_TxData, space, info_throt, 6, 3, 1);
+	  sprintf(UART_TxData, "%.2f", speed);
+	  mergearray(speed_name, UART_TxData, place_holder, info_speed, 6, 6, 0);
 
-	  sprintf(UART_TxData, "%d", brake);
-	  mergearray(brake_name, UART_TxData, space, info_brake, 6, 3, 1);
-
-	  mergearray(info_steer, info_throt, info_brake, info_out, 10, 10, 10);
+	  mergearray(info_steer, info_speed, place_holder, info_out, 13, 12, 0);
 
 	  HAL_UART_Transmit(&huart6, info_out, sizeof(info_out), 10); // Sending in normal mode
 }
@@ -179,14 +174,8 @@ void send_gokart_info(int steer, int throttle, int brake){
 void handle_gokart_info(){
 	uint8_t place_holder[10];
 
-	sscanf(data_frame, "%s %u %s %u %s %u", place_holder, &steer_av, place_holder, &throttle_av, place_holder, &brake_av);
-	printf("%u, %u, %u \r\n", steer_av, throttle_av, brake_av);
-
-	int i;
-	for (i=0;i < (sizeof (data_frame) /sizeof (data_frame[0]));i++) {
-		debug_printf("%c",data_frame[i]);
-	}
-	debug_printf("\r\n");
+	sscanf(drive_msg, "%s %f %s %f", place_holder, &steer_av, place_holder, &speed_av);
+	printf("drive command from laptop: steer %.3f, speed %.3f \r\n", steer_av, speed_av);
 }
 
 float get_throttle(){
@@ -209,10 +198,10 @@ float get_throttle(){
 
 	float throttle = speed_ki * speed_error_int;
 
-	printf("speed desired %.2f \r\n", speed_desired);
-	printf("speed measured %.2f \r\n", speed_measured);
-	printf("speed error integration %.2f \r\n", speed_error_int);
-	printf("throttle %.2f \r\n\n", throttle);
+//	printf("speed desired %.2f \r\n", speed_desired);
+//	printf("speed measured %.2f \r\n", speed_measured);
+//	printf("speed error integration %.2f \r\n", speed_error_int);
+//	printf("throttle %.2f \r\n\n", throttle);
 
 	return throttle;
 }
@@ -224,10 +213,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		angular_accum = 0.0;
 	}
 
-	// counter 168Mz (clock) / 168 (prescaler) / 20000 (counter) = 50Hz (20ms);
+	// counter 168Mz (clock) / 168 (prescaler) / 25000 (counter) = 40Hz (25ms);
 	if (htim == &htim7){
-	    // send_gokart_info(CAN_TxData[0] + 100 - 60, (int)(app.acc_percent*100) + 100, CAN_TxData[1] + 100);
-	    // handle_gokart_info();
+	    send_gokart_info((CAN_TxData[0] - 55.0) / 180.0 * 3.14159, speed_measured, CAN_TxData[1] * 1.0);
+	    handle_gokart_info();
 	}
 
 	// counter 168Mz (clock) / 168 (prescaler) / 20000 (counter) = 50Hz (20ms);
@@ -676,7 +665,7 @@ static void MX_TIM7_Init(void)
   htim7.Instance = TIM7;
   htim7.Init.Prescaler = 168-1;
   htim7.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim7.Init.Period = 20000;
+  htim7.Init.Period = 25000;
   htim7.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim7) != HAL_OK)
   {

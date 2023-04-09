@@ -91,7 +91,7 @@ void app_run(app_state_t *app) {
 
 	printf(MAIN "starting..." nl);
 
-	app->steering_angle = 60.0;
+	app->steering_angle = GOKART_STEER_MAX;
 
 	spektrum_nucleo_state_t *rc_receiver = &app->rc_receiver;
 
