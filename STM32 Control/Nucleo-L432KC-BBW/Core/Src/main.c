@@ -42,12 +42,9 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
-
 CAN_HandleTypeDef hcan1;
-
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim6;
-
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -80,19 +77,23 @@ uint8_t CAN_RxData[4];
 int count = 0;
 int count_max = 25;
 
-float brake_measured = 0.0;
-float brake_empirical_max = 150.0;
-float brake_pressure_max = 500.0;
+int brake_duty_cycle;
 
-float brake_measured_avg = 0.0;
-float brake_measured_sum = 0.0;
+double brake_desired = 0.0;
+double brake_measured = 0.0;
+double brake_error = 0.0;
 
-float brake_voltage = 0.0;
-float brake_voltage_max = 5.0;
-float brake_voltage_min = 1.0;
+double brake_empirical_max = 150.0;
+double brake_pressure_max = 500.0;
 
-int brake_command = 0;
+double brake_measured_avg = 0.0;
+double brake_measured_sum = 0.0;
 
+double brake_voltage = 0.0;
+double brake_voltage_max = 5.0;
+double brake_voltage_min = 1.0;
+
+// uart print to serial terminal for debugging purpose
 int _write(int file, char *ptr, int len){
 	HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, HAL_MAX_DELAY);
 	return len;
@@ -105,85 +106,60 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
     Error_Handler();
   }
 
+  // 0x100 is the can device id of the main controller
   if ((RxHeader.StdId == 0x100))
   {
-	  brake_command = CAN_RxData[1];
+	  // first compute the brake percentage then the pressure needed
+	  brake_desired = CAN_RxData[1] / 100.0 * brake_empirical_max;
   }
 }
 
 // Timer interrupt every 25ms (frequency = 40Hz)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-  float brake_desired = brake_command / 100.0 * brake_empirical_max;
-  float brake_error = brake_measured_avg - brake_desired;
+  brake_error = brake_measured_avg - brake_desired;
 
-  if(brake_desired < 15.0 && brake_measured_avg < 15.0){
+  int condition1 = brake_desired < 15.0 && brake_measured_avg < 15.0;     // no brake in effect
+  int condition2 = brake_desired > 135.0 && brake_measured_avg > 135.0;   // reached maximum brake
+  int condition3 = brake_error > -10.0 && brake_error < 10.0;             // brake error quite small
+
+  // lock the motor and cutoff power
+  if (condition1 || condition2 || condition3){
 	  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_RESET);
 	  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_RESET);
-	  TIM1->CCR1 = 0;
-	  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+	  brake_duty_cycle = 0;
+  }
+  else{
+	  // set the movement direction of the motor
+	  if(brake_error > 0.0){
+		  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_RESET);
+		  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_SET);
+	  } else{
+		  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_SET);
+		  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_RESET);
+	  }
 
-	  CAN_TxData[0] = (int)(brake_measured_avg);
-	  HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
+	  // set motor speed (max duty cycle 400)
+	  if(brake_error > 0.0){
+		  brake_duty_cycle = (int)(brake_error * 20.0);
+	  } else{
+		  brake_duty_cycle = 400;
+	  }
 
-	  printf("No brake steady state \r\n");
-	  return;
+	  if(brake_duty_cycle > 400){
+		  brake_duty_cycle = 400;
+	  }
   }
 
-  if(brake_desired > 135.0 && brake_measured_avg > 135.0){
-	  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_RESET);
-	  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_RESET);
-	  TIM1->CCR1 = 0;
-	  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-
-	  printf("Maximum brake effort reached \r\n");
-	  return;
-  }
-
-  if(brake_error > -5.0 && brake_error < 5.0){
-	  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_RESET);
-	  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_RESET);
-	  TIM1->CCR1 = 0;
-	  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-
-	  printf("brake pressure measured: %.2f PSI \r\n", brake_measured_avg);
-	  printf("brake pressure desired: %.2f PSI \r\n", brake_desired);
-	  printf("reached target state");
-	  return;
-  }
-
-  if(brake_error > 0.0){
-	  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_RESET);
-	  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_SET);
-  } else{
-	  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_SET);
-	  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_RESET);
-  }
-
-  int duty_cycle;
-
-  if(brake_error > 0.0){
-	  duty_cycle = (int)(brake_error * 20.0);
-  } else{
-	  duty_cycle = 400;
-  }
-
-  if(duty_cycle > 400){
-	  duty_cycle = 400;
-  }
-
-  TIM1->CCR1 = duty_cycle;
+  // send out speed control pwm
+  TIM1->CCR1 = brake_duty_cycle;
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
-  if (brake_measured_avg < 0){
-	  brake_measured_avg = 0;
-  }
-
+  // send out measured braking pressure to canbus
   CAN_TxData[0] = (int)(brake_measured_avg);
   HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
 
   printf("brake pressure measured: %.2f PSI \r\n", brake_measured_avg);
   printf("brake pressure desired: %.2f PSI \r\n", brake_desired);
-  printf("current duty cycle: %d \r\n", duty_cycle);
 }
 
 /* USER CODE END 0 */
@@ -221,13 +197,8 @@ int main(void)
   MX_TIM6_Init();
   MX_TIM1_Init();
   MX_ADC1_Init();
+
   /* USER CODE BEGIN 2 */
-
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-
-  HAL_TIM_Base_Start_IT(&htim6);
-
-  HAL_ADC_Start(&hadc1);
 
   /* USER CODE END 2 */
 
@@ -248,6 +219,10 @@ int main(void)
 
 	  if (count == count_max){
 		  brake_measured_avg = brake_measured_sum / count_max;
+
+		  if (brake_measured_avg < 0){
+			  brake_measured_avg = 0;
+		  }
 
 		  count = 0;
 		  brake_measured_sum = 0.0;
@@ -367,7 +342,7 @@ static void MX_ADC1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN ADC1_Init 2 */
-
+  HAL_ADC_Start(&hadc1);
   /* USER CODE END ADC1_Init 2 */
 
 }
@@ -495,6 +470,7 @@ static void MX_TIM1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM1_Init 2 */
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
   /* USER CODE END TIM1_Init 2 */
   HAL_TIM_MspPostInit(&htim1);
@@ -534,7 +510,7 @@ static void MX_TIM6_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM6_Init 2 */
-
+  HAL_TIM_Base_Start_IT(&htim6);
   /* USER CODE END TIM6_Init 2 */
 
 }

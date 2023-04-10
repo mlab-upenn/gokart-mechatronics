@@ -286,7 +286,7 @@ void get_throttle_pedal_value(){
 	throttle = HAL_ADC_GetValue(&hadc1);
 	acc_percent = (throttle_max - throttle) * 1.0 / (throttle_max - throttle_min) * 1.0;
 	acc_percent = 1.0 - acc_percent;
-	debug_printf("throttle %d \r\n", throttle);
+	printf("throttle %d \r\n", throttle);
 }
 
 /* USER CODE END 0 */

@@ -23,10 +23,10 @@
 /* USER CODE BEGIN Includes */
 
 #include "utils.h"
-#include "vesc.h"
-#include "as5047p.h"
 #include "math.h"
 #include <stdio.h>
+#include "vesc.h"
+#include "as5047p.h"
 
 /* USER CODE END Includes */
 
@@ -50,15 +50,12 @@ CAN_HandleTypeDef hcan1;
 SPI_HandleTypeDef hspi1;
 
 TIM_HandleTypeDef htim6;
+TIM_HandleTypeDef htim7;
 
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-
-#define VESC_UART &huart1
-
-as5047p_spi_comm_stats_t as5047p;
 
 /* USER CODE END PV */
 
@@ -70,8 +67,8 @@ static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_TIM6_Init(void);
+static void MX_TIM7_Init(void);
 /* USER CODE BEGIN PFP */
-float wrap_to_pi(float angle);
 
 /* USER CODE END PFP */
 
@@ -88,59 +85,31 @@ uint8_t CAN_RxData[4];
 
 uint8_t vesc_packet[10];
 
-float error = 0.0;
-float error_prev = 0.0;
+double error = 0.0;
+double error_prev = 0.0;
 
-// for multi-surface friction
-float error_multiplier = 0.5;
+double kp_e = 0.06;
+double kd_e = 1.20;
 
-// different params for left turn, right turn, and centering
-float current_multiplier;
+double kp_v = 0.025;
 
-float kp_e = 0.06;
-float kd_e = 1.20;
-
-float kp_v = 0.025;
-
-float vel = 0.0;
-float vel_limit = 120.0;
+double vel = 0.0;
+double vel_limit = 120.0;
 
 double steer_measured = 0.0;
 double steer_desired = 0.0;
+double steer_offset = -20.9;
+double steer_max = 55.0;
 
-float steer_offset = -20.9;
-
-void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
-{
-  if (HAL_CAN_GetRxMessage(hcan1, CAN_RX_FIFO0, &RxHeader, CAN_RxData) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-
-  if (RxHeader.StdId == 0x100)
-  {
-	  steer_desired = CAN_RxData[0] - 55.0;
-	  steer_desired = -steer_desired;
-	  steer_desired = wrap_to_pi(steer_desired);
-  }
-}
-
+// uart print to serial terminal for debugging purpose
 int _write(int file, char *ptr, int len){
 	HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, HAL_MAX_DELAY);
 	return len;
 }
 
-float abs_value(float value){
-	if (value >= 0.0){
-		return value;
-	} else{
-		return -value;
-	}
-}
-
-// wrap angle between -PI and PI
-float wrap_to_pi(float angle){
-	float new_angle;
+// wrap angle between -180 and 180
+double wrap_to_pi(double angle){
+	double new_angle;
 
 	if (angle < -180.0){
 		new_angle = angle + 360.0;
@@ -153,33 +122,64 @@ float wrap_to_pi(float angle){
 	return new_angle;
 }
 
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
+{
+  if (HAL_CAN_GetRxMessage(hcan1, CAN_RX_FIFO0, &RxHeader, CAN_RxData) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+
+  // 0x100 is the can device id of the main controller
+  if (RxHeader.StdId == 0x100)
+  {
+	  // raw unsigned int can data [0 - 110]
+	  // recovered raw steer data [-55 - 55]
+	  steer_desired = CAN_RxData[0] - steer_max;
+	  steer_desired = -steer_desired;
+	  steer_desired = wrap_to_pi(steer_desired);
+  }
+}
+
 // Timer callback every 20ms (frequency = 50Hz)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+	// for multi-surface friction compensation
+	double error_multiplier = 0.4;
 
-	if (htim == &htim6) {
-		// read the current steering angle from the sensor
+	// different param for left turn, right turn, and centering
+	double current_multiplier;
+
+	// read the current steering angle from the sensor (50Hz = 20ms)
+	if (htim == &htim7) {
+		as5047p_spi_comm_stats_t as5047p;
+
 	    if (spi_as5047p_blocking_read(&steer_measured, &as5047p) == HAL_OK) {
 	    	steer_measured -= steer_offset;
 		    steer_measured = wrap_to_pi(steer_measured);
 	    }
+	}
 
+	// perform standard PD control loop (50Hz = 20ms)
+	if (htim == &htim6) {
 	    error = steer_desired - steer_measured;
 
-	    if (error > -1.0 && error < 1.0){
+	    // ignore small error to avoid oscillation
+	    if (fabs(error) < 1.0){
 	    	error = 0.0;
 	    }
 
 	    vel += (error * kp_e + (error - error_prev) * kd_e) * error_multiplier;
 	    error_prev = error;
 
+	    // bound error integration to max value
 	    if (vel > vel_limit){
 	    	vel = vel_limit;
 	    }
-
 	    if (vel < -vel_limit){
 	    	vel = -vel_limit;
 	    }
 
+	    // the gokart has asymmetric weight and therefore requires different
+	    // PID current gain when making the steering effort
 	    if (steer_desired > 0.0 && steer_desired > steer_measured){
 	    	vel *= 0.98;
 	    	current_multiplier = 4.0;
@@ -193,11 +193,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	    	current_multiplier = 3.0;
 	    }
 
-	    float current = kp_v * vel * current_multiplier;
+	    double current = kp_v * vel * current_multiplier;
 
+	    // send current command to vesc via uart
 		vesc_set_current(vesc_packet, (float)current);
 		HAL_UART_Transmit(VESC_UART, vesc_packet, sizeof(vesc_packet), 2);
 
+		// our can data is 8-bit unsigned int, therefore cannot be negative
+		// the receiver (main controller) will substract 100 to recover raw value
 		CAN_TxData[0] = (int)(steer_measured + 100.0);
 	    HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
 
@@ -257,12 +260,10 @@ int main(void)
   MX_USART2_UART_Init();
   MX_SPI1_Init();
   MX_TIM6_Init();
+  MX_TIM7_Init();
+
   /* USER CODE BEGIN 2 */
-
-  HAL_TIM_Base_Start_IT(&htim6);
-
-  HAL_Delay(1000);
-
+  HAL_Delay(500);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -453,8 +454,46 @@ static void MX_TIM6_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM6_Init 2 */
-
+  HAL_TIM_Base_Start_IT(&htim6);
   /* USER CODE END TIM6_Init 2 */
+
+}
+
+/**
+  * @brief TIM7 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM7_Init(void)
+{
+
+  /* USER CODE BEGIN TIM7_Init 0 */
+
+  /* USER CODE END TIM7_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM7_Init 1 */
+
+  /* USER CODE END TIM7_Init 1 */
+  htim7.Instance = TIM7;
+  htim7.Init.Prescaler = 16-1;
+  htim7.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim7.Init.Period = 20000;
+  htim7.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim7) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim7, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM7_Init 2 */
+  HAL_TIM_Base_Start_IT(&htim7);
+  /* USER CODE END TIM7_Init 2 */
 
 }
 

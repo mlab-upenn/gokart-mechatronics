@@ -61,6 +61,8 @@ void Error_Handler(void);
 #define SPI1_NSS_MANUAL_GPIO_Port GPIOA
 /* USER CODE BEGIN Private defines */
 
+#define VESC_UART &huart1
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
