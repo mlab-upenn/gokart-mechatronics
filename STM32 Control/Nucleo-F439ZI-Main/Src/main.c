@@ -73,6 +73,12 @@ float speed_measured = 0.0;
 float speed_desired = 0.0;
 float speed_maximum = 6.0;
 
+float steer_desired = 0.0;
+float steer_measured = 0.0;
+
+float brake_desired = 0.0;
+float brake_measured = 0.0;
+
 float speed_error = 0.0;
 float speed_error_pre = 0.0;
 float speed_error_int = 0.0;
@@ -89,8 +95,8 @@ CAN_RxHeaderTypeDef RxHeader;
 
 uint32_t TxMailbox;
 
-uint8_t CAN_TxData[8];
-uint8_t CAN_RxData[8];
+uint8_t CAN_TxData[6];
+uint8_t CAN_RxData[6];
 
 char UART_TxData[6];
 
@@ -206,6 +212,26 @@ float get_throttle(){
 	return throttle;
 }
 
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
+{
+  if (HAL_CAN_GetRxMessage(hcan1, CAN_RX_FIFO0, &RxHeader, CAN_RxData) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+
+  if (RxHeader.StdId == 0x101)
+  {
+	  steer_measured = CAN_RxData[0] - 100.0;
+	  printf("lower steer measured %.2f \r\n", steer_measured);
+  }
+
+  if (RxHeader.StdId == 0x103)
+  {
+	  brake_measured = CAN_RxData[0] - 50.0;
+	  printf("brake measured %.2f PSI \r\n", brake_measured);
+  }
+}
+
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	// counter 168Mz (clock) / 672 (prescaler) / 25000 (counter) = 10Hz (100ms);
 	if (htim == &htim10){
@@ -215,8 +241,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 
 	// counter 168Mz (clock) / 168 (prescaler) / 25000 (counter) = 40Hz (25ms);
 	if (htim == &htim7){
-	    send_gokart_info((CAN_TxData[0] - 55.0) / 180.0 * 3.14159, speed_measured, CAN_TxData[1] * 1.0);
-	    handle_gokart_info();
+	    // send_gokart_info((CAN_TxData[0] - 55.0) / 180.0 * 3.14159, speed_measured, CAN_TxData[1] * 1.0);
+	    // handle_gokart_info();
 	}
 
 	// counter 168Mz (clock) / 168 (prescaler) / 20000 (counter) = 50Hz (20ms);
@@ -447,7 +473,7 @@ static void MX_CAN1_Init(void)
   TxHeader.ExtId = 0;
   TxHeader.IDE = CAN_ID_STD;
   TxHeader.RTR = CAN_RTR_DATA;
-  TxHeader.StdId = 0x104;
+  TxHeader.StdId = 0x100;
   TxHeader.TransmitGlobalTime = DISABLE;
 
   /* USER CODE END CAN1_Init 0 */

@@ -74,10 +74,8 @@ CAN_RxHeaderTypeDef RxHeader;
 
 uint32_t TxMailbox;
 
-uint8_t TxData[8];
-uint8_t RxData[8];
-
-uint8_t vesc_packet[10];
+uint8_t CAN_TxData[4];
+uint8_t CAN_RxData[4];
 
 int count = 0;
 int count_max = 25;
@@ -102,14 +100,14 @@ int _write(int file, char *ptr, int len){
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
 {
-  if (HAL_CAN_GetRxMessage(hcan1, CAN_RX_FIFO0, &RxHeader, RxData) != HAL_OK)
+  if (HAL_CAN_GetRxMessage(hcan1, CAN_RX_FIFO0, &RxHeader, CAN_RxData) != HAL_OK)
   {
     Error_Handler();
   }
 
-  if ((RxHeader.StdId == 0x104))
+  if ((RxHeader.StdId == 0x100))
   {
-	  brake_command = RxData[1];
+	  brake_command = CAN_RxData[1];
   }
 }
 
@@ -123,6 +121,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_RESET);
 	  TIM1->CCR1 = 0;
 	  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+
+	  CAN_TxData[0] = (int)(brake_measured_avg);
+	  HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
 
 	  printf("No brake steady state \r\n");
 	  return;
@@ -173,6 +174,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
   TIM1->CCR1 = duty_cycle;
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
+  if (brake_measured_avg < 0){
+	  brake_measured_avg = 0;
+  }
+
+  CAN_TxData[0] = (int)(brake_measured_avg);
+  HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
+
   printf("brake pressure measured: %.2f PSI \r\n", brake_measured_avg);
   printf("brake pressure desired: %.2f PSI \r\n", brake_desired);
   printf("current duty cycle: %d \r\n", duty_cycle);
@@ -214,16 +222,6 @@ int main(void)
   MX_TIM1_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
-
-  HAL_CAN_Start(&hcan1);
-  HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
-
-  TxHeader.DLC = 1;
-  TxHeader.ExtId = 0;
-  TxHeader.IDE = CAN_ID_STD;
-  TxHeader.RTR = CAN_RTR_DATA;
-  TxHeader.StdId = 0x102;
-  TxHeader.TransmitGlobalTime = DISABLE;
 
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
@@ -381,8 +379,13 @@ static void MX_ADC1_Init(void)
   */
 static void MX_CAN1_Init(void)
 {
-
   /* USER CODE BEGIN CAN1_Init 0 */
+  TxHeader.DLC = 4;
+  TxHeader.ExtId = 0;
+  TxHeader.IDE = CAN_ID_STD;
+  TxHeader.RTR = CAN_RTR_DATA;
+  TxHeader.StdId = 0x103;
+  TxHeader.TransmitGlobalTime = DISABLE;
 
   /* USER CODE END CAN1_Init 0 */
 
@@ -412,15 +415,17 @@ static void MX_CAN1_Init(void)
   canfilterconfig.FilterActivation = CAN_FILTER_ENABLE;
   canfilterconfig.FilterBank = 10;  // which filter bank to use from the assigned ones
   canfilterconfig.FilterFIFOAssignment = CAN_FILTER_FIFO0;
-  canfilterconfig.FilterIdHigh = 0x104<<5;
+  canfilterconfig.FilterIdHigh = 0;
   canfilterconfig.FilterIdLow = 0x0000;
-  canfilterconfig.FilterMaskIdHigh = 0x104<<5;
+  canfilterconfig.FilterMaskIdHigh = 0;
   canfilterconfig.FilterMaskIdLow = 0x0000;
   canfilterconfig.FilterMode = CAN_FILTERMODE_IDMASK;
   canfilterconfig.FilterScale = CAN_FILTERSCALE_32BIT;
   canfilterconfig.SlaveStartFilterBank = 20;  // how many filters to assign to the CAN1 (master can)
 
   HAL_CAN_ConfigFilter(&hcan1, &canfilterconfig);
+  HAL_CAN_Start(&hcan1);
+  HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
 
   /* USER CODE END CAN1_Init 2 */
 

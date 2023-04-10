@@ -83,8 +83,8 @@ CAN_RxHeaderTypeDef RxHeader;
 
 uint32_t TxMailbox;
 
-uint8_t TxData[8];
-uint8_t RxData[8];
+uint8_t CAN_TxData[4];
+uint8_t CAN_RxData[4];
 
 uint8_t vesc_packet[10];
 
@@ -92,7 +92,7 @@ float error = 0.0;
 float error_prev = 0.0;
 
 // for multi-surface friction
-float error_multiplier = 1.0;
+float error_multiplier = 0.5;
 
 // different params for left turn, right turn, and centering
 float current_multiplier;
@@ -105,7 +105,6 @@ float kp_v = 0.025;
 float vel = 0.0;
 float vel_limit = 120.0;
 
-double steer_prev = 0.0;
 double steer_measured = 0.0;
 double steer_desired = 0.0;
 
@@ -113,14 +112,16 @@ float steer_offset = -20.9;
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
 {
-  if (HAL_CAN_GetRxMessage(hcan1, CAN_RX_FIFO0, &RxHeader, RxData) != HAL_OK)
+  if (HAL_CAN_GetRxMessage(hcan1, CAN_RX_FIFO0, &RxHeader, CAN_RxData) != HAL_OK)
   {
-    Error_Handler();
+	  Error_Handler();
   }
 
-  if ((RxHeader.StdId == 0x104))
+  if (RxHeader.StdId == 0x100)
   {
-
+	  steer_desired = CAN_RxData[0] - 55.0;
+	  steer_desired = -steer_desired;
+	  steer_desired = wrap_to_pi(steer_desired);
   }
 }
 
@@ -162,11 +163,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		    steer_measured = wrap_to_pi(steer_measured);
 	    }
 
-	    steer_desired = -(double)(RxData[0] - 55.0);
-	    steer_desired = wrap_to_pi(steer_desired);
-
-	    steer_prev = steer_measured;
-
 	    error = steer_desired - steer_measured;
 
 	    if (error > -1.0 && error < 1.0){
@@ -201,6 +197,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 
 		vesc_set_current(vesc_packet, (float)current);
 		HAL_UART_Transmit(VESC_UART, vesc_packet, sizeof(vesc_packet), 2);
+
+		CAN_TxData[0] = (int)(steer_measured + 100.0);
+	    HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
 
 	    printf(
 	  	  "velocity: %.2f \r\n", vel
@@ -330,11 +329,11 @@ static void MX_CAN1_Init(void)
 {
 
   /* USER CODE BEGIN CAN1_Init 0 */
-  TxHeader.DLC = 2;
+  TxHeader.DLC = 4;
   TxHeader.ExtId = 0;
   TxHeader.IDE = CAN_ID_STD;
   TxHeader.RTR = CAN_RTR_DATA;
-  TxHeader.StdId = 0x103;
+  TxHeader.StdId = 0x101;
   TxHeader.TransmitGlobalTime = DISABLE;
 
   /* USER CODE END CAN1_Init 0 */
@@ -365,9 +364,9 @@ static void MX_CAN1_Init(void)
   canfilterconfig.FilterActivation = CAN_FILTER_ENABLE;
   canfilterconfig.FilterBank = 10;  // which filter bank to use from the assigned ones
   canfilterconfig.FilterFIFOAssignment = CAN_FILTER_FIFO0;
-  canfilterconfig.FilterIdHigh = 0x104<<5;
+  canfilterconfig.FilterIdHigh = 0;
   canfilterconfig.FilterIdLow = 0x0000;
-  canfilterconfig.FilterMaskIdHigh = 0x104<<5;
+  canfilterconfig.FilterMaskIdHigh = 0;
   canfilterconfig.FilterMaskIdLow = 0x0000;
   canfilterconfig.FilterMode = CAN_FILTERMODE_IDMASK;
   canfilterconfig.FilterScale = CAN_FILTERSCALE_32BIT;

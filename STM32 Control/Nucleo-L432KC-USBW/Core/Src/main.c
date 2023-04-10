@@ -71,8 +71,8 @@ CAN_RxHeaderTypeDef RxHeader;
 
 uint32_t TxMailbox;
 
-uint8_t TxData[8];
-uint8_t RxData[8];
+uint8_t CAN_TxData[8];
+uint8_t CAN_RxData[8];
 
 uint8_t vesc_packet[10];
 
@@ -113,17 +113,15 @@ int _write(int file, char *ptr, int len){
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
 {
-  if (HAL_CAN_GetRxMessage(hcan1, CAN_RX_FIFO0, &RxHeader, RxData) != HAL_OK)
+  if (HAL_CAN_GetRxMessage(hcan1, CAN_RX_FIFO0, &RxHeader, CAN_RxData) != HAL_OK)
   {
     Error_Handler();
   }
 
-  if ((RxHeader.StdId == 0x104))
+  if ((RxHeader.StdId == 0x100))
   {
-
+	  angle_desired = (float)CAN_RxData[0] - 55.0;
   }
-
-  angle_desired = (float)RxData[0] - 60.0;
 }
 
 // wrap angle between -PI and PI
@@ -233,13 +231,6 @@ int main(void)
   HAL_CAN_Start(&hcan1);
   HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
 
-  TxHeader.DLC = 1;
-  TxHeader.ExtId = 0;
-  TxHeader.IDE = CAN_ID_STD;
-  TxHeader.RTR = CAN_RTR_DATA;
-  TxHeader.StdId = 0x103;
-  TxHeader.TransmitGlobalTime = DISABLE;
-
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
 
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
@@ -334,6 +325,12 @@ static void MX_CAN1_Init(void)
 {
 
   /* USER CODE BEGIN CAN1_Init 0 */
+  TxHeader.DLC = 1;
+  TxHeader.ExtId = 0;
+  TxHeader.IDE = CAN_ID_STD;
+  TxHeader.RTR = CAN_RTR_DATA;
+  TxHeader.StdId = 0x102;
+  TxHeader.TransmitGlobalTime = DISABLE;
 
   /* USER CODE END CAN1_Init 0 */
 
