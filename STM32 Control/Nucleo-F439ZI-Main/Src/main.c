@@ -79,9 +79,10 @@ float steer_measured = 0.0;
 float brake_desired = 0.0;
 float brake_measured = 0.0;
 
+float speed_kp = 0.04;
+float speed_kc = 0.08;
+
 float speed_error = 0.0;
-float speed_error_pre = 0.0;
-float speed_error_int = 0.0;
 
 float wheel_diameter = 0.27; // meters
 
@@ -185,34 +186,22 @@ void handle_gokart_info(){
 }
 
 float get_throttle(){
-	float speed_ki = 0.0025;
+	float throttle;
 
 	if (speed_desired == 0.0){
-		speed_error_int = 0.0;  // clear the velocity integration
-		// return speed_ki * speed_error_int;
+		throttle = 0.0;
+	} else{
+		speed_error = speed_desired - speed_measured;
+		throttle = speed_kp * speed_error + speed_kc * speed_desired;
 	}
 
-	float error = speed_desired - speed_measured;
-
-	speed_error_int += error;
-
-	if (error < 0.0){
-		speed_error_int *= 0.98;
+	if (throttle > 0.5){
+		throttle = 0.5;
 	}
 
-	if (speed_error_int > 400.0){
-		speed_error_int = 400.0;
-	}
-	if (speed_error_int < 0.0){
-		speed_error_int = 0.0;
-	}
-
-	float throttle = speed_ki * speed_error_int;
-
-//	printf("speed desired %.2f \r\n", speed_desired);
-//	printf("speed measured %.2f \r\n", speed_measured);
-//	printf("speed error integration %.2f \r\n", speed_error_int);
-//	printf("throttle %.2f \r\n\n", throttle);
+	printf("speed desired %.2f \r\n", speed_desired);
+	printf("speed measured %.2f \r\n", speed_measured);
+	printf("throttle %.2f \r\n\n", throttle);
 
 	return throttle;
 }

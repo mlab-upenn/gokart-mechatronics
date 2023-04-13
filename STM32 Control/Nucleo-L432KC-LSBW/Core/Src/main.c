@@ -99,8 +99,8 @@ double steer_max = 50.0;
 
 double current = 0.0;
 double angle_compensation = 0.0;
-double current_multiplier = 1.1; // for multip-surface friction adjustment
-double current_max = 12.0;
+double current_multiplier = 1.4; // for multip-surface friction adjustment
+double current_max = 15.0;
 
 // uart print to serial terminal for debugging purpose
 int _write(int file, char *ptr, int len){
