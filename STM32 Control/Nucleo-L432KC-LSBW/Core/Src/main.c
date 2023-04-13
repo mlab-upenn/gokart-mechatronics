@@ -87,19 +87,19 @@ uint8_t vesc_packet[10];
 
 double error = 0.0;
 double error_prev = 0.0;
+double error_max = 10.0;
 
-double kp_e = 0.06;
-double kd_e = 1.20;
-
-double kp_v = 0.025;
-
-double vel = 0.0;
-double vel_limit = 120.0;
+double kp_e = 0.40;
+double kd_e = 1.00;
 
 double steer_measured = 0.0;
 double steer_desired = 0.0;
-double steer_offset = -20.9;
-double steer_max = 55.0;
+double steer_offset = 155.0;
+double steer_max = 35.0;
+
+double current = 0.0;
+double angle_compensation = 0.0;
+double current_multiplier = 1.0; // for multip-surface adjustment
 
 // uart print to serial terminal for debugging purpose
 int _write(int file, char *ptr, int len){
@@ -142,13 +142,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
 
 // Timer callback every 20ms (frequency = 50Hz)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	// for multi-surface friction compensation
-	double error_multiplier = 0.4;
-
-	// different param for left turn, right turn, and centering
-	double current_multiplier;
-
-	// read the current steering angle from the sensor (50Hz = 20ms)
+	// read the current steering angle from the sensor (25Hz = 40ms)
 	if (htim == &htim7) {
 		as5047p_spi_comm_stats_t as5047p;
 
@@ -158,42 +152,36 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	    }
 	}
 
-	// perform standard PD control loop (50Hz = 20ms)
+	// perform standard PD control loop (25Hz = 40ms)
 	if (htim == &htim6) {
 	    error = steer_desired - steer_measured;
 
 	    // ignore small error to avoid oscillation
-	    if (fabs(error) < 1.0){
-	    	error = 0.0;
+	    if (steer_desired == 0.0 && fabs(error) < 1.0)
+	    {
+	    	error = error_prev = current = 0.0;
 	    }
+	    else
+	    {
+			double error_bound = error;
 
-	    vel += (error * kp_e + (error - error_prev) * kd_e) * error_multiplier;
-	    error_prev = error;
+			if (error > error_max){
+				error_bound = error_max;
+			} if (error < -error_max){
+				error_bound = -error_max;
+			}
 
-	    // bound error integration to max value
-	    if (vel > vel_limit){
-	    	vel = vel_limit;
-	    }
-	    if (vel < -vel_limit){
-	    	vel = -vel_limit;
-	    }
+			if (fabs(steer_desired) > 5.0){
+				angle_compensation = 3.0 * (steer_desired / steer_max);
+			} else{
+				angle_compensation = 0.0;
+			}
 
-	    // the gokart has asymmetric weight and therefore requires different
-	    // PID current gain when making the steering effort
-	    if (steer_desired > 0.0 && steer_desired > steer_measured){
-	    	vel *= 0.98;
-	    	current_multiplier = 4.0;
-	    }
-	    else if(steer_desired < 0.0 && steer_desired < steer_measured){
-	    	vel *= 0.97;
-	    	current_multiplier = 5.0;
-	    }
-	    else{
-	    	vel *= 0.98;
-	    	current_multiplier = 3.0;
-	    }
+		    current = error_bound * kp_e + (error - error_prev) * kd_e + angle_compensation;
+		    current *= current_multiplier;
 
-	    double current = kp_v * vel * current_multiplier;
+			error_prev = error;
+	    }
 
 	    // send current command to vesc via uart
 		vesc_set_current(vesc_packet, (float)current);
@@ -205,23 +193,16 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	    HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
 
 	    printf(
-	  	  "velocity: %.2f \r\n", vel
-	    );
-
-	    printf(
 	  	  "steering angle desired: %.2f \r\n", steer_desired
 	    );
-
 	    printf(
 	  	  "steering angle measured: %.2f \r\n", steer_measured
 	    );
-
 	    printf(
 	  	  "steering angle error: %.2f \r\n", error
 	    );
-
 	    printf(
-	  	  "raw current control: %.2f \r\n", current
+	  	  "control current: %.2f \r\n", current
 	    );
 	}
 }
@@ -261,7 +242,6 @@ int main(void)
   MX_SPI1_Init();
   MX_TIM6_Init();
   MX_TIM7_Init();
-
   /* USER CODE BEGIN 2 */
   HAL_Delay(500);
   /* USER CODE END 2 */
@@ -441,7 +421,7 @@ static void MX_TIM6_Init(void)
   htim6.Instance = TIM6;
   htim6.Init.Prescaler = 16-1;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 20000;
+  htim6.Init.Period = 40000;
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
   {

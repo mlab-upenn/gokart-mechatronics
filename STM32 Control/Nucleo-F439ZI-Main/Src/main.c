@@ -185,18 +185,21 @@ void handle_gokart_info(){
 }
 
 float get_throttle(){
-	float speed_ki = 0.005;
+	float speed_ki = 0.0025;
 
 	if (speed_desired == 0.0){
 		speed_error_int = 0.0;  // clear the velocity integration
-		return speed_ki * speed_error_int;
+		// return speed_ki * speed_error_int;
 	}
 
-	speed_error_int += (speed_desired - speed_measured);
-	speed_error_int *= 0.999;
+	float error = speed_desired - speed_measured;
 
-	if (speed_error_int > 200.0){
-		speed_error_int = 200.0;
+	speed_error_int += (speed_desired - speed_measured);
+
+//	speed_error_int *= 0.999;
+
+	if (speed_error_int > 400.0){
+		speed_error_int = 400.0;
 	}
 	if (speed_error_int < 0.0){
 		speed_error_int = 0.0;
@@ -204,10 +207,10 @@ float get_throttle(){
 
 	float throttle = speed_ki * speed_error_int;
 
-//	printf("speed desired %.2f \r\n", speed_desired);
-//	printf("speed measured %.2f \r\n", speed_measured);
-//	printf("speed error integration %.2f \r\n", speed_error_int);
-//	printf("throttle %.2f \r\n\n", throttle);
+	printf("speed desired %.2f \r\n", speed_desired);
+	printf("speed measured %.2f \r\n", speed_measured);
+	printf("speed error integration %.2f \r\n", speed_error_int);
+	printf("throttle %.2f \r\n\n", throttle);
 
 	return throttle;
 }
@@ -222,13 +225,13 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
   if (RxHeader.StdId == 0x101)
   {
 	  steer_measured = CAN_RxData[0] - 100.0;
-	  printf("lower steer measured %.2f \r\n", steer_measured);
+	  // printf("lower steer measured %.2f \r\n", steer_measured);
   }
 
   if (RxHeader.StdId == 0x103)
   {
 	  brake_measured = CAN_RxData[0] - 50.0;
-	  printf("brake measured %.2f PSI \r\n", brake_measured);
+	  // printf("brake measured %.2f PSI \r\n", brake_measured);
   }
 }
 
