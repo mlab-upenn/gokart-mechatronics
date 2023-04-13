@@ -94,12 +94,13 @@ double kd_e = 1.00;
 
 double steer_measured = 0.0;
 double steer_desired = 0.0;
-double steer_offset = 155.0;
-double steer_max = 35.0;
+double steer_offset = 157.0;
+double steer_max = 50.0;
 
 double current = 0.0;
 double angle_compensation = 0.0;
-double current_multiplier = 1.0; // for multip-surface adjustment
+double current_multiplier = 1.1; // for multip-surface friction adjustment
+double current_max = 12.0;
 
 // uart print to serial terminal for debugging purpose
 int _write(int file, char *ptr, int len){
@@ -133,9 +134,8 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
   if (RxHeader.StdId == 0x100)
   {
 	  // raw unsigned int can data [0 - 110]
-	  // recovered raw steer data [-55 - 55]
+	  // recovered raw steer data [-45 - 45]
 	  steer_desired = CAN_RxData[0] - steer_max;
-	  steer_desired = -steer_desired;
 	  steer_desired = wrap_to_pi(steer_desired);
   }
 }
@@ -179,6 +179,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 
 		    current = error_bound * kp_e + (error - error_prev) * kd_e + angle_compensation;
 		    current *= current_multiplier;
+
+		    if (current > current_max){
+		    	current = current_max;
+		    }
+		    if (current < -current_max){
+		    	current = -current_max;
+		    }
 
 			error_prev = error;
 	    }

@@ -194,9 +194,11 @@ float get_throttle(){
 
 	float error = speed_desired - speed_measured;
 
-	speed_error_int += (speed_desired - speed_measured);
+	speed_error_int += error;
 
-//	speed_error_int *= 0.999;
+	if (error < 0.0){
+		speed_error_int *= 0.98;
+	}
 
 	if (speed_error_int > 400.0){
 		speed_error_int = 400.0;
@@ -207,10 +209,10 @@ float get_throttle(){
 
 	float throttle = speed_ki * speed_error_int;
 
-	printf("speed desired %.2f \r\n", speed_desired);
-	printf("speed measured %.2f \r\n", speed_measured);
-	printf("speed error integration %.2f \r\n", speed_error_int);
-	printf("throttle %.2f \r\n\n", throttle);
+//	printf("speed desired %.2f \r\n", speed_desired);
+//	printf("speed measured %.2f \r\n", speed_measured);
+//	printf("speed error integration %.2f \r\n", speed_error_int);
+//	printf("throttle %.2f \r\n\n", throttle);
 
 	return throttle;
 }
@@ -248,7 +250,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	    // handle_gokart_info();
 	}
 
-	// counter 168Mz (clock) / 168 (prescaler) / 20000 (counter) = 50Hz (20ms);
+	// counter 168Mz (clock) / 336 (prescaler) / 50000 (counter) = 10Hz (100ms);
 	if (htim == &htim6) {
 	  acc_percent = app.acc_percent;
 
@@ -654,9 +656,9 @@ static void MX_TIM6_Init(void)
 
   /* USER CODE END TIM6_Init 1 */
   htim6.Instance = TIM6;
-  htim6.Init.Prescaler = 168-1;
+  htim6.Init.Prescaler = 336-1;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 20000;
+  htim6.Init.Period = 25000;
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
   {
