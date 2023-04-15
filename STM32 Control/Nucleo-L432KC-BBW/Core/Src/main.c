@@ -110,7 +110,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
   if ((RxHeader.StdId == 0x100))
   {
 	  // first compute the brake percentage then the pressure needed
-	  brake_desired = CAN_RxData[1] / 100.0 * brake_empirical_max;
+	  brake_desired = CAN_RxData[1];
   }
 }
 

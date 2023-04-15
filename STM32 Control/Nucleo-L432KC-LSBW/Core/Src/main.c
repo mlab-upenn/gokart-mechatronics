@@ -99,8 +99,9 @@ double steer_max = 50.0;
 
 double current = 0.0;
 double angle_compensation = 0.0;
-double current_multiplier = 1.4; // for multip-surface friction adjustment
+double current_multiplier = 1.5; // for multip-surface friction adjustment
 double current_max = 15.0;
+
 
 // uart print to serial terminal for debugging purpose
 int _write(int file, char *ptr, int len){
@@ -123,6 +124,87 @@ double wrap_to_pi(double angle){
 	return new_angle;
 }
 
+// read the current steering angle from the sensor
+void read_steer(){
+	as5047p_spi_comm_stats_t as5047p;
+
+    if (spi_as5047p_blocking_read(&steer_measured, &as5047p) == HAL_OK) {
+    	steer_measured -= steer_offset;
+	    steer_measured = wrap_to_pi(steer_measured);
+    }
+}
+
+// modified PID control for steering current
+void compute_current(){
+    error = steer_desired - steer_measured;
+
+    // ignore small error to avoid oscillation
+    if (steer_desired == 0.0 && fabs(error) < 1.0)
+    {
+    	error = error_prev = current = 0.0;
+    	return;
+    }
+
+	double error_bound = error;
+
+	if (error > error_max){
+		error_bound = error_max;
+	} if (error < -error_max){
+		error_bound = -error_max;
+	}
+
+	if (fabs(steer_desired) > 5.0){
+		angle_compensation = 3.0 * (steer_desired / steer_max);
+	} else{
+		angle_compensation = 0.0;
+	}
+
+    current = error_bound * kp_e + (error - error_prev) * kd_e + angle_compensation;
+    current *= current_multiplier;
+
+    if (current > current_max){
+    	current = current_max;
+    }
+    if (current < -current_max){
+    	current = -current_max;
+    }
+
+	error_prev = error;
+}
+
+
+// send can and uart command
+void send_command(){
+	float steer_transmit = steer_measured;
+
+	if (steer_transmit > steer_max){
+		steer_transmit = steer_max;
+	} else if (steer_transmit < -steer_max){
+		steer_transmit = -steer_max;
+	}
+
+	// send measured steering angle on canbus
+	CAN_TxData[0] = (int)(steer_transmit + steer_max);
+    HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
+
+    // send current command to vesc via uart
+	vesc_set_current(vesc_packet, (float)current);
+	HAL_UART_Transmit(VESC_UART, vesc_packet, sizeof(vesc_packet), 2);
+
+    printf(
+  	  "steering angle desired: %.2f \r\n", steer_desired
+    );
+    printf(
+  	  "steering angle measured: %.2f \r\n", steer_measured
+    );
+    printf(
+  	  "steering angle error: %.2f \r\n", error
+    );
+    printf(
+  	  "control current: %.2f \r\n", current
+    );
+}
+
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
 {
   if (HAL_CAN_GetRxMessage(hcan1, CAN_RX_FIFO0, &RxHeader, CAN_RxData) != HAL_OK)
@@ -133,86 +215,25 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
   // 0x100 is the can device id of the main controller
   if (RxHeader.StdId == 0x100)
   {
-	  // raw unsigned int can data [0 - 110]
-	  // recovered raw steer data [-45 - 45]
+	  // recover raw steer data [-50 - 50]
 	  steer_desired = CAN_RxData[0] - steer_max;
 	  steer_desired = wrap_to_pi(steer_desired);
   }
 }
 
-// Timer callback every 20ms (frequency = 50Hz)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	// read the current steering angle from the sensor (25Hz = 40ms)
-	if (htim == &htim7) {
-		as5047p_spi_comm_stats_t as5047p;
-
-	    if (spi_as5047p_blocking_read(&steer_measured, &as5047p) == HAL_OK) {
-	    	steer_measured -= steer_offset;
-		    steer_measured = wrap_to_pi(steer_measured);
-	    }
+	// 25Hz - 40ms
+	if (htim == &htim6) {
+		compute_current();
+		send_command();
 	}
 
-	// perform standard PD control loop (25Hz = 40ms)
-	if (htim == &htim6) {
-	    error = steer_desired - steer_measured;
-
-	    // ignore small error to avoid oscillation
-	    if (steer_desired == 0.0 && fabs(error) < 1.0)
-	    {
-	    	error = error_prev = current = 0.0;
-	    }
-	    else
-	    {
-			double error_bound = error;
-
-			if (error > error_max){
-				error_bound = error_max;
-			} if (error < -error_max){
-				error_bound = -error_max;
-			}
-
-			if (fabs(steer_desired) > 5.0){
-				angle_compensation = 3.0 * (steer_desired / steer_max);
-			} else{
-				angle_compensation = 0.0;
-			}
-
-		    current = error_bound * kp_e + (error - error_prev) * kd_e + angle_compensation;
-		    current *= current_multiplier;
-
-		    if (current > current_max){
-		    	current = current_max;
-		    }
-		    if (current < -current_max){
-		    	current = -current_max;
-		    }
-
-			error_prev = error;
-	    }
-
-	    // send current command to vesc via uart
-		vesc_set_current(vesc_packet, (float)current);
-		HAL_UART_Transmit(VESC_UART, vesc_packet, sizeof(vesc_packet), 2);
-
-		// our can data is 8-bit unsigned int, therefore cannot be negative
-		// the receiver (main controller) will substract 100 to recover raw value
-		CAN_TxData[0] = (int)(steer_measured + 100.0);
-	    HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
-
-	    printf(
-	  	  "steering angle desired: %.2f \r\n", steer_desired
-	    );
-	    printf(
-	  	  "steering angle measured: %.2f \r\n", steer_measured
-	    );
-	    printf(
-	  	  "steering angle error: %.2f \r\n", error
-	    );
-	    printf(
-	  	  "control current: %.2f \r\n", current
-	    );
+	// 40Hz - 20ms
+	if (htim == &htim7) {
+		read_steer();
 	}
 }
+
 /* USER CODE END 0 */
 
 /**

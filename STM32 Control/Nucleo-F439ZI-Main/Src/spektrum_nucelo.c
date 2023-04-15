@@ -14,7 +14,6 @@ void spektrum_nucleo_reset_receiver(spektrum_nucleo_state_t *state, bool full) {
 }
 
 static void spektrum_nucleo_process_packet(spektrum_nucleo_state_t *state) {
-
 	// check packet structure first
 	uint8_t system = state->packet.system;
 	if (
@@ -28,10 +27,6 @@ static void spektrum_nucleo_process_packet(spektrum_nucleo_state_t *state) {
 		return;
 	}
 
-	// TODO: It seems that the last channel (servo) data are always 0xFFFF. We can check that.
-
-	// packet okay
-
 	// parse it
 	spektrum_packet_to_msg(&state->packet, &state->msg);
 
@@ -39,7 +34,6 @@ static void spektrum_nucleo_process_packet(spektrum_nucleo_state_t *state) {
 
 	// reset buffer
 	state->buffer_size = 0;
-
 }
 
 void spektrum_nucleo_handle_overrun(spektrum_nucleo_state_t *state) {
@@ -70,7 +64,6 @@ void spektrum_nucleo_handle_byte(spektrum_nucleo_state_t *state, uint8_t data) {
 }
 
 void spektrum_nucleo_handle_idle(spektrum_nucleo_state_t *state, uint32_t ts) {
-
 	state->uart_idle_it_last_ts = ts;
 	state->uart_idle_it_count += 1u;
 
@@ -92,7 +85,6 @@ void spektrum_nucleo_reset_stats(spektrum_nucleo_state_t *state) {
 }
 
 void spektrum_nucleo_start_receiving(UART_HandleTypeDef *huart) {
-	// __HAL_UART_ENABLE_IT(huart, UART_IT_ORE); TODO
 	__HAL_UART_ENABLE_IT(huart, UART_IT_IDLE);
 	__HAL_UART_ENABLE_IT(huart, UART_IT_RXNE);
 }
@@ -100,7 +92,6 @@ void spektrum_nucleo_start_receiving(UART_HandleTypeDef *huart) {
 void spektrum_nucleo_stop_receiving(UART_HandleTypeDef *huart) {
 	__HAL_UART_DISABLE_IT(huart, UART_IT_RXNE);
 	__HAL_UART_DISABLE_IT(huart, UART_IT_IDLE);
-	// __HAL_UART_DISABLE_IT(huart, UART_IT_ORE); TODO
 }
 
 void spektrum_nucleo_irq_handler(spektrum_nucleo_state_t *state, UART_HandleTypeDef *huart) {

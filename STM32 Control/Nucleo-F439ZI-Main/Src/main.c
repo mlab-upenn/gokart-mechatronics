@@ -18,15 +18,13 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "stdio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
-#include <uart_serial.h>
 #include "app.h"
-#include "terminal.h"
-#include "utils.h"
-#include "endianness.h"
+#include "uart_serial.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -54,39 +52,36 @@ TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim7;
 TIM_HandleTypeDef htim10;
+TIM_HandleTypeDef htim11;
 
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
 UART_HandleTypeDef huart6;
 
 /* USER CODE BEGIN PV */
-int throttle;
-int throttle_min = 50;
-int throttle_max = 2800;
+int gokart_mode = 0;
+int gokart_status = 0;
 
 int speed_sensor_val = 0;
 int speed_sensor_pre = 0;
 
-float angular_accum = 0.0;
+float throttle = 0.0;
+float throttle_max = 0.5;
 
 float speed_measured = 0.0;
 float speed_desired = 0.0;
-float speed_maximum = 6.0;
+float speed_max = 6.0;
+float speed_accumu = 0.0;
 
 float steer_desired = 0.0;
 float steer_measured = 0.0;
+float steer_max = 50.0;
 
 float brake_desired = 0.0;
 float brake_measured = 0.0;
+float brake_max = 150.0;
 
-float speed_kp = 0.04;
-float speed_kc = 0.08;
-
-float speed_error = 0.0;
-
-float wheel_diameter = 0.27; // meters
-
-float acc_percent;
+float wheel_diameter = 0.27;
 
 app_state_t app;
 app_state_t *main_app;
@@ -100,8 +95,6 @@ uint8_t CAN_TxData[6];
 uint8_t CAN_RxData[6];
 
 char UART_TxData[6];
-
-float steer_av, speed_av;
 
 /* USER CODE END PV */
 
@@ -118,12 +111,20 @@ static void MX_TIM6_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM7_Init(void);
 static void MX_TIM10_Init(void);
+static void MX_TIM11_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+int Debug_UART_Get_Byte() {
+	if (__HAL_UART_GET_FLAG(&huart3, UART_FLAG_RXNE) == SET) {
+		return (uint8_t) (huart3.Instance->DR & (uint8_t) 0x00FF);
+	}
+	return -1;
+}
 
 // This function merges array a, b, c into array d in sequence (no sort)
 void mergearray(char a[], char b[], char c[], char d[], int arr1size, int arr2size, int arr3size)
@@ -149,61 +150,131 @@ void mergearray(char a[], char b[], char c[], char d[], int arr1size, int arr2si
     }
 }
 
-int Debug_UART_Get_Byte() {
-	if (__HAL_UART_GET_FLAG(&huart3, UART_FLAG_RXNE) == SET) {
-		return (uint8_t) (huart3.Instance->DR & (uint8_t) 0x00FF);
+void send_gokart_info(){
+	char info_steer[13];
+	char info_speed[12];
+
+	char info_out[25];
+	char steer_name[] = "steer ";
+	char speed_name[] = "speed ";
+	char space[] = " ";
+	char place_holder[] = "";
+
+	sprintf(UART_TxData, "%.2f", steer_measured / 180.0 * 3.14);
+	mergearray(steer_name, UART_TxData, space, info_steer, 6, 6, 1);
+
+	sprintf(UART_TxData, "%.2f", speed_measured);
+	mergearray(speed_name, UART_TxData, place_holder, info_speed, 6, 6, 0);
+
+	mergearray(info_steer, info_speed, place_holder, info_out, 13, 12, 0);
+
+	HAL_UART_Transmit(&huart6, info_out, sizeof(info_out), 10); // Sending in normal mode
+}
+
+void handle_remote_command(){
+	float acc_percent = app.acc_percent;
+	float steer_percent = app.steer_percent;
+
+	if (acc_percent < 0.00){
+		speed_desired = 0.00;
+	} else{
+		speed_desired = acc_percent * speed_max;
 	}
-	return -1;
+
+	if(acc_percent > 0.00){
+		brake_desired = 0.0;
+	} else{
+		brake_desired = -acc_percent * brake_max;
+	}
+
+	steer_desired = steer_percent * steer_max;
 }
 
-void send_gokart_info(float steer, float speed, float brake){
-	  char info_steer[13];
-	  char info_speed[12];
-
-	  char info_out[25];
-
-	  char steer_name[] = "steer ";
-	  char speed_name[] = "speed ";
-	  char space[] = " ";
-	  char place_holder[] = "";
-
-	  sprintf(UART_TxData, "%.2f", steer);
-	  mergearray(steer_name, UART_TxData, space, info_steer, 6, 6, 1);
-
-	  sprintf(UART_TxData, "%.2f", speed);
-	  mergearray(speed_name, UART_TxData, place_holder, info_speed, 6, 6, 0);
-
-	  mergearray(info_steer, info_speed, place_holder, info_out, 13, 12, 0);
-
-	  HAL_UART_Transmit(&huart6, info_out, sizeof(info_out), 10); // Sending in normal mode
-}
-
-void handle_gokart_info(){
+void handle_autonomous_command(){
 	uint8_t place_holder[10];
 
-	sscanf(drive_msg, "%s %f %s %f", place_holder, &steer_av, place_holder, &speed_av);
-	printf("drive command from laptop: steer %.3f, speed %.3f \r\n", steer_av, speed_av);
+	sscanf(drive_msg, "%s %f %s %f", place_holder, &steer_desired, place_holder, &speed_desired);
 }
 
-float get_throttle(){
-	float throttle;
+void handle_manual_command(){
+
+}
+
+void compute_throttle(){
+	float speed_kp = 0.04;
+	float speed_kc = 0.08;
 
 	if (speed_desired == 0.0){
 		throttle = 0.0;
 	} else{
-		speed_error = speed_desired - speed_measured;
+		float speed_error = speed_desired - speed_measured;
 		throttle = speed_kp * speed_error + speed_kc * speed_desired;
 	}
+}
 
-	if (throttle > 0.5){
-		throttle = 0.5;
+void cast_command(){
+	if(steer_desired > steer_max){
+		steer_desired = steer_max;
+	} else if (steer_desired < -steer_max){
+		steer_desired = -steer_max;
 	}
 
-	printf("speed desired %.2f \r\n", speed_desired);
-	printf("speed measured %.2f \r\n", speed_measured);
-	printf("throttle %.2f \r\n\n", throttle);
+	if (throttle > throttle_max){
+		throttle = throttle_max;
+	} else if (throttle < 0.0){
+		throttle = 0.0;
+	}
 
-	return throttle;
+	if (brake_desired > brake_max){
+		brake_desired = brake_max;
+	} else if (brake_desired < 0.0){
+		brake_desired = 0.0;
+	}
+}
+
+void send_command(){
+	// Send CANBus command
+	CAN_TxData[0] = (int)(steer_desired + steer_max);
+	CAN_TxData[1] = (int)(brake_desired);
+    HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
+
+	// Set throttle signal PWM
+    TIM1->CCR1 = 145 - (int)(145.0 * throttle);
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+}
+
+void check_switch(){
+	gokart_status = app.gokart_status;
+
+	if (gokart_status == 0){
+		steer_desired = 0.0;
+		throttle = 0.0;
+		brake_desired = brake_max;
+	}
+}
+
+void print_info(){
+	if (gokart_mode == 0){
+		printf("mode: remote \r\n");
+	} else if (gokart_mode == 1){
+		printf("mode: autonomous \r\n");
+	} else if (gokart_mode == 2){
+		printf("mode: manual \r\n");
+	}
+
+	if (gokart_status == 0){
+		printf("gokart status: off \r\n\n");
+	} else{
+		printf("gokart status: on \r\n\n");
+	}
+
+	printf("steer desired %.2f  ", steer_desired);
+	printf("steer measured %.2f \r\n", steer_measured);
+	printf("brake desired %.2f  ", brake_desired);
+	printf("brake measured %.2f \r\n", brake_measured);
+	printf("speed desired %.2f  ", speed_desired);
+	printf("speed measured %.2f \r\n", speed_measured);
+	printf("\r\n");
 }
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
@@ -215,72 +286,49 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
 
   if (RxHeader.StdId == 0x101)
   {
-	  steer_measured = CAN_RxData[0] - 100.0;
-	  // printf("lower steer measured %.2f \r\n", steer_measured);
+	  steer_measured = CAN_RxData[0] - steer_max;
   }
 
   if (RxHeader.StdId == 0x103)
   {
-	  brake_measured = CAN_RxData[0] - 50.0;
-	  // printf("brake measured %.2f PSI \r\n", brake_measured);
+	  brake_measured = CAN_RxData[0];
   }
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	// counter 168Mz (clock) / 672 (prescaler) / 25000 (counter) = 10Hz (100ms);
-	if (htim == &htim10){
-		speed_measured = angular_accum / 360.0 * wheel_diameter * 3.14 / 0.1;
-		angular_accum = 0.0;
-	}
-
-	// counter 168Mz (clock) / 168 (prescaler) / 25000 (counter) = 40Hz (25ms);
-	if (htim == &htim7){
-	    // send_gokart_info((CAN_TxData[0] - 55.0) / 180.0 * 3.14159, speed_measured, CAN_TxData[1] * 1.0);
-	    // handle_gokart_info();
-	}
-
-	// counter 168Mz (clock) / 336 (prescaler) / 50000 (counter) = 10Hz (100ms);
+	// 40Hz - 25ms;
 	if (htim == &htim6) {
-	  acc_percent = app.acc_percent;
+		gokart_mode = app.control_mode;
 
-	  if(acc_percent > -0.05){
-		  CAN_TxData[1] = (int)0;
-	  } else{
-		  CAN_TxData[1] = (int)(-acc_percent * 100.0);
-	  }
+		if (gokart_mode == 0){
+			handle_remote_command();
+		} else if (gokart_mode == 1){
+			handle_autonomous_command();
+		} else if (gokart_mode == 2){
+			handle_manual_command();
+		}
 
-	  if (acc_percent < 0.00){
-		  acc_percent = 0.00;
-	  }
+		compute_throttle();
+		cast_command();
+		check_switch();
+		send_command();
+	}
 
-	  if (acc_percent > 1.00){
-		  acc_percent = 1.00;
-	  }
+	// 40Hz - 25ms;
+	if (htim == &htim7 && app.control_mode == 1){
+	     send_gokart_info();
+	}
 
-	  speed_desired = speed_maximum * acc_percent;
-	  float throttle = get_throttle();
+	// 5Hz - 200ms;
+	if (htim == &htim10){
+		speed_measured = speed_accumu / 360.0 * wheel_diameter * 3.14 / 0.2;
+		speed_accumu = 0.0;
+	}
 
-	  TIM1->CCR1 = 145 - (int)(145.0 * throttle);
-	  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-
-	  // send steer command over can bus
-	  CAN_TxData[0] = (int)app.steering_angle;
-
-	  //printf("acceleration %.2f" nl, acc_percent);
-	  //printf("steering angle desired %d \r\n", CAN_TxData[0]);
-
-	  HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
-  }
-}
-
-void get_throttle_pedal_value(){
-	// Get throttle value
-	HAL_ADC_Start(&hadc1);
-	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
-	throttle = HAL_ADC_GetValue(&hadc1);
-	acc_percent = (throttle_max - throttle) * 1.0 / (throttle_max - throttle_min) * 1.0;
-	acc_percent = 1.0 - acc_percent;
-	printf("throttle %d \r\n", throttle);
+	// 5Hz - 200ms
+	if (htim == &htim11){
+		print_info();
+	}
 }
 
 /* USER CODE END 0 */
@@ -323,16 +371,11 @@ int main(void)
   MX_I2C1_Init();
   MX_TIM7_Init();
   MX_TIM10_Init();
+  MX_TIM11_Init();
   /* USER CODE BEGIN 2 */
 
   main_app = &app;
   app_run(&app);
-
-  HAL_TIM_Base_Start_IT(&htim6);
-  HAL_TIM_Base_Start_IT(&htim7);
-  HAL_TIM_Base_Start_IT(&htim10);
-
-  av_com_start_receiving(&huart6);
 
   // Wait time to initialize everything
   HAL_Delay(500);
@@ -346,7 +389,7 @@ int main(void)
 	  int speed_sensor_val = HAL_GPIO_ReadPin(GPIOG, Speed_Sensor_Pin);
 
 	  if(speed_sensor_val != speed_sensor_pre){
-		  angular_accum += 36.0; // 10 magnets (36 degrees per gap)
+		  speed_accumu += 36.0; // 10 magnets (36 degrees per gap)
 		  speed_sensor_pre = speed_sensor_val;
 	  }
   }
@@ -645,7 +688,7 @@ static void MX_TIM6_Init(void)
 
   /* USER CODE END TIM6_Init 1 */
   htim6.Instance = TIM6;
-  htim6.Init.Prescaler = 336-1;
+  htim6.Init.Prescaler = 168-1;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim6.Init.Period = 25000;
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -660,7 +703,7 @@ static void MX_TIM6_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM6_Init 2 */
-
+  HAL_TIM_Base_Start_IT(&htim6);
   /* USER CODE END TIM6_Init 2 */
 
 }
@@ -698,7 +741,7 @@ static void MX_TIM7_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM7_Init 2 */
-
+  HAL_TIM_Base_Start_IT(&htim7);
   /* USER CODE END TIM7_Init 2 */
 
 }
@@ -719,7 +762,7 @@ static void MX_TIM10_Init(void)
 
   /* USER CODE END TIM10_Init 1 */
   htim10.Instance = TIM10;
-  htim10.Init.Prescaler = 672-1;
+  htim10.Init.Prescaler = 1344-1;
   htim10.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim10.Init.Period = 25000;
   htim10.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -729,8 +772,39 @@ static void MX_TIM10_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM10_Init 2 */
-
+  HAL_TIM_Base_Start_IT(&htim10);
   /* USER CODE END TIM10_Init 2 */
+
+}
+
+/**
+  * @brief TIM11 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM11_Init(void)
+{
+
+  /* USER CODE BEGIN TIM11_Init 0 */
+
+  /* USER CODE END TIM11_Init 0 */
+
+  /* USER CODE BEGIN TIM11_Init 1 */
+
+  /* USER CODE END TIM11_Init 1 */
+  htim11.Instance = TIM11;
+  htim11.Init.Prescaler = 1344-1;
+  htim11.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim11.Init.Period = 25000;
+  htim11.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim11.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim11) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM11_Init 2 */
+  HAL_TIM_Base_Start_IT(&htim11);
+  /* USER CODE END TIM11_Init 2 */
 
 }
 
@@ -828,7 +902,7 @@ static void MX_USART6_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART6_Init 2 */
-
+  uart_serial_start(&huart6);
   /* USER CODE END USART6_Init 2 */
 
 }

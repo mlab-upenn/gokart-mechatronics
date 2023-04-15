@@ -3,23 +3,19 @@
 uint8_t drive_msg[25];
 uint8_t current_pos = 0;
 
-void send_vehicle_status(UART_HandleTypeDef *huart, uint8_t message[], int size){
-	HAL_UART_Transmit(huart, message, size, 14);// Sending in normal mode
-}
-
-void av_com_start_receiving(UART_HandleTypeDef *huart) {
+void uart_serial_start(UART_HandleTypeDef *huart) {
 	__HAL_UART_ENABLE_IT(huart, UART_IT_IDLE);
 	__HAL_UART_ENABLE_IT(huart, UART_IT_RXNE);
 }
 
-void av_com_stop_receiving(UART_HandleTypeDef *huart) {
+void uart_serial_stop(UART_HandleTypeDef *huart) {
 	__HAL_UART_DISABLE_IT(huart, UART_IT_RXNE);
 	__HAL_UART_DISABLE_IT(huart, UART_IT_IDLE);
 }
 
 
 // make sure you go to stm32f4xx_it.c and replace the default usart6 handler with this function
-void av_com_irq_handler(UART_HandleTypeDef *huart) {
+void uart_serial_irq_handler(UART_HandleTypeDef *huart) {
 	// If data overrun, clear the overrun flag and reset
 	if (__HAL_UART_GET_FLAG(huart, UART_FLAG_ORE)) {
 		current_pos = 0;
@@ -49,9 +45,6 @@ void av_com_irq_handler(UART_HandleTypeDef *huart) {
 		__HAL_UART_CLEAR_IDLEFLAG(huart);
 
 		if(current_pos != 0){
-			 // printf("num bits received, %d", current_pos);
-			 // printf("uart message corrupted or wrong format, discard \r\n");
-
 			current_pos = 0;
 			memset(drive_msg, '\0', sizeof(drive_msg));
 		}

@@ -3,10 +3,8 @@
 extern uint8_t drive_msg[25];
 extern uint8_t current_pos;
 
-void send_vehicle_status(UART_HandleTypeDef *huart, uint8_t message[], int size);
+void uart_serial_start(UART_HandleTypeDef *huart);
 
-void av_com_start_receiving(UART_HandleTypeDef *huart);
+void uart_serial_stop(UART_HandleTypeDef *huart);
 
-void av_com_stop_receiving(UART_HandleTypeDef *huart);
-
-void av_com_irq_handler(UART_HandleTypeDef *huart);
+void uart_serial_irq_handler(UART_HandleTypeDef *huart);
