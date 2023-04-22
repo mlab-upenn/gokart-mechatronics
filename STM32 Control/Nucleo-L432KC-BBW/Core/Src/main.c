@@ -42,9 +42,13 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+
 CAN_HandleTypeDef hcan1;
+
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim6;
+TIM_HandleTypeDef htim7;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -59,6 +63,7 @@ static void MX_CAN1_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_ADC1_Init(void);
+static void MX_TIM7_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -74,24 +79,22 @@ uint32_t TxMailbox;
 uint8_t CAN_TxData[4];
 uint8_t CAN_RxData[4];
 
-int count = 0;
-int count_max = 25;
+int first_met = 0;
+int brake_duty_cycle = 0;
 
-int brake_duty_cycle;
+double pressure_desired = 0.0;
+double pressure_measured = 0.0;
+double pressure_error = 0.0;
 
-double brake_desired = 0.0;
-double brake_measured = 0.0;
-double brake_error = 0.0;
+double pressure_empirical_max = 150.0;
+double pressure_abs_max = 500.0;
 
-double brake_empirical_max = 150.0;
-double brake_pressure_max = 500.0;
+double pressure_measured_avg = 0.0;
+double pressure_measured_sum = 0.0;
 
-double brake_measured_avg = 0.0;
-double brake_measured_sum = 0.0;
-
-double brake_voltage = 0.0;
-double brake_voltage_max = 5.0;
-double brake_voltage_min = 1.0;
+double pressure_voltage = 0.0;
+double pressure_voltage_max = 5.0;
+double pressure_voltage_min = 1.0;
 
 // uart print to serial terminal for debugging purpose
 int _write(int file, char *ptr, int len){
@@ -110,56 +113,66 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
   if ((RxHeader.StdId == 0x100))
   {
 	  // first compute the brake percentage then the pressure needed
-	  brake_desired = CAN_RxData[1];
+	  pressure_desired = CAN_RxData[1];
   }
 }
 
 // Timer interrupt every 25ms (frequency = 40Hz)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-  brake_error = brake_measured_avg - brake_desired;
+  if (htim == &htim6){
+	  pressure_error = pressure_measured_avg - pressure_desired;
 
-  int condition1 = brake_desired < 15.0 && brake_measured_avg < 15.0;     // no brake in effect
-  int condition2 = brake_desired > 135.0 && brake_measured_avg > 135.0;   // reached maximum brake
-  int condition3 = brake_error > -10.0 && brake_error < 10.0;             // brake error quite small
+	  int condition1 = pressure_desired < 10.0 && pressure_measured_avg < 10.0;      // no brake in effect
+	  int condition2 = pressure_desired > 140.0 && pressure_measured_avg > 140.0;   // reached maximum brake
+	  int condition3 = pressure_error > -15.0 && pressure_error < 15.0;                // brake error quite small
 
-  // lock the motor and cutoff power
-  if (condition1 || condition2 || condition3){
-	  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_RESET);
-	  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_RESET);
-	  brake_duty_cycle = 0;
-  }
-  else{
-	  // set the movement direction of the motor
-	  if(brake_error > 0.0){
+	  if (pressure_error > -10.0 && pressure_error < 10.0){
+		  first_met = 1;
+	  }
+
+	  // lock the motor and cutoff power
+	  if (condition1 || condition2 || (condition3 && first_met)){
 		  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_RESET);
-		  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_SET);
-	  } else{
-		  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_SET);
 		  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_RESET);
+		  brake_duty_cycle = 0;
+	  }
+	  else{
+		  first_met = 0;
+
+		  // set the movement direction of the motor
+		  if(pressure_error > 0.0){
+			  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_RESET);
+			  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_SET);
+		  } else{
+			  HAL_GPIO_WritePin(GPIOA, Motor1_Pin, GPIO_PIN_SET);
+			  HAL_GPIO_WritePin(GPIOA, Motor2_Pin, GPIO_PIN_RESET);
+		  }
+
+		  // set motor speed (max duty cycle 400)
+		  if(pressure_error > 0.0){
+			  brake_duty_cycle = pressure_error * 20.0;
+		  } else{
+			  brake_duty_cycle = 400;
+		  }
+
+		  if(brake_duty_cycle > 400){
+			  brake_duty_cycle = 400;
+		  }
 	  }
 
-	  // set motor speed (max duty cycle 400)
-	  if(brake_error > 0.0){
-		  brake_duty_cycle = (int)(brake_error * 20.0);
-	  } else{
-		  brake_duty_cycle = 400;
-	  }
+	  // send out speed control pwm
+	  TIM1->CCR1 = brake_duty_cycle;
+	  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
-	  if(brake_duty_cycle > 400){
-		  brake_duty_cycle = 400;
-	  }
+	  // send out measured braking pressure to canbus
+	  CAN_TxData[0] = (int)(pressure_measured_avg);
+	  HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
   }
 
-  // send out speed control pwm
-  TIM1->CCR1 = brake_duty_cycle;
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-
-  // send out measured braking pressure to canbus
-  CAN_TxData[0] = (int)(brake_measured_avg);
-  HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
-
-  printf("brake pressure measured: %.2f PSI \r\n", brake_measured_avg);
-  printf("brake pressure desired: %.2f PSI \r\n", brake_desired);
+  if (htim == &htim7){
+	  printf("brake pressure measured: %.2f PSI \r\n", pressure_measured_avg);
+	  printf("brake pressure desired: %.2f PSI \r\n", pressure_desired);
+  }
 }
 
 /* USER CODE END 0 */
@@ -197,8 +210,13 @@ int main(void)
   MX_TIM6_Init();
   MX_TIM1_Init();
   MX_ADC1_Init();
-
+  MX_TIM7_Init();
   /* USER CODE BEGIN 2 */
+
+  // IMPORTANT: DO NOT MOVE THIS COUNTER TO GLOBAL VARIABLE
+  // OR IT WILL BE RESET EVERY FEW COUNTS FOR NO REASON
+  int count_max = 100;
+  int pressure_count = 0;
 
   /* USER CODE END 2 */
 
@@ -211,23 +229,24 @@ int main(void)
 
 	  // reference adc reading [0-4095], reference voltage [0-3.3v]
 	  // however, empirical test show that 3.7v gives more accurate reading
-	  brake_voltage = HAL_ADC_GetValue(&hadc1) / 4095.0 * 3.7;
-	  brake_measured = (brake_voltage - brake_voltage_min) / (brake_voltage_max - brake_voltage_min) * brake_pressure_max;
+	  pressure_voltage = HAL_ADC_GetValue(&hadc1) / 4095.0 * 3.7;
+	  pressure_measured = (pressure_voltage - pressure_voltage_min) / (pressure_voltage_max - pressure_voltage_min) * pressure_abs_max;
 
-	  brake_measured_sum += brake_measured;
-	  count += 1;
-
-	  if (count == count_max){
-		  brake_measured_avg = brake_measured_sum / count_max;
-
-		  if (brake_measured_avg < 0){
-			  brake_measured_avg = 0;
-		  }
-
-		  count = 0;
-		  brake_measured_sum = 0.0;
+	  if (pressure_measured > 0.0 && pressure_measured < pressure_abs_max){
+		  pressure_measured_sum += pressure_measured;
+		  pressure_count += 1;
 	  }
 
+	  if (pressure_count == count_max){
+		  pressure_measured_avg = pressure_measured_sum / count_max;
+
+		  if (pressure_measured_avg < 0){
+			  pressure_measured_avg = 0;
+		  }
+
+		  pressure_count = 0;
+		  pressure_measured_sum = 0.0;
+	  }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -342,7 +361,7 @@ static void MX_ADC1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN ADC1_Init 2 */
-  HAL_ADC_Start(&hadc1);
+//  HAL_ADC_Start(&hadc1);
   /* USER CODE END ADC1_Init 2 */
 
 }
@@ -354,6 +373,7 @@ static void MX_ADC1_Init(void)
   */
 static void MX_CAN1_Init(void)
 {
+
   /* USER CODE BEGIN CAN1_Init 0 */
   TxHeader.DLC = 4;
   TxHeader.ExtId = 0;
@@ -497,7 +517,7 @@ static void MX_TIM6_Init(void)
   htim6.Instance = TIM6;
   htim6.Init.Prescaler = 16-1;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 25000;
+  htim6.Init.Period = 20000;
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
   {
@@ -512,6 +532,44 @@ static void MX_TIM6_Init(void)
   /* USER CODE BEGIN TIM6_Init 2 */
   HAL_TIM_Base_Start_IT(&htim6);
   /* USER CODE END TIM6_Init 2 */
+
+}
+
+/**
+  * @brief TIM7 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM7_Init(void)
+{
+
+  /* USER CODE BEGIN TIM7_Init 0 */
+
+  /* USER CODE END TIM7_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM7_Init 1 */
+
+  /* USER CODE END TIM7_Init 1 */
+  htim7.Instance = TIM7;
+  htim7.Init.Prescaler = 64-1;
+  htim7.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim7.Init.Period = 25000;
+  htim7.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim7) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim7, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM7_Init 2 */
+  HAL_TIM_Base_Start_IT(&htim7);
+  /* USER CODE END TIM7_Init 2 */
 
 }
 
