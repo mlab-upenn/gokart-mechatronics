@@ -18,7 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "stdio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -53,6 +52,8 @@ TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim7;
 TIM_HandleTypeDef htim10;
 TIM_HandleTypeDef htim11;
+TIM_HandleTypeDef htim13;
+TIM_HandleTypeDef htim14;
 
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
@@ -94,7 +95,7 @@ uint32_t TxMailbox;
 uint8_t CAN_TxData[6];
 uint8_t CAN_RxData[6];
 
-char UART_TxData[6];
+//char UART_TxData[6];
 
 /* USER CODE END PV */
 
@@ -112,6 +113,8 @@ static void MX_I2C1_Init(void);
 static void MX_TIM7_Init(void);
 static void MX_TIM10_Init(void);
 static void MX_TIM11_Init(void);
+static void MX_TIM13_Init(void);
+static void MX_TIM14_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -150,23 +153,26 @@ void mergearray(char a[], char b[], char c[], char d[], int arr1size, int arr2si
     }
 }
 
-void send_gokart_info(){
+void send_gokart_info(float steer, float speed, int is_info){
+	char data[6];
 	char info_steer[13];
-	char info_speed[12];
+	char info_speed[13];
+	char info_type[9];
+	char info_out[35];
 
-	char info_out[25];
-	char steer_name[] = "steer ";
-	char speed_name[] = "speed ";
-	char space[] = " ";
-	char place_holder[] = "";
+	sprintf(data, "%.2f", steer / 180.0 * 3.14);
+	mergearray("steer ", data, " ", info_steer, 6, 6, 1);
 
-	sprintf(UART_TxData, "%.2f", steer_measured / 180.0 * 3.14);
-	mergearray(steer_name, UART_TxData, space, info_steer, 6, 6, 1);
+	sprintf(data, "%.2f", speed);
+	mergearray("speed ", data, " ", info_speed, 6, 6, 1);
 
-	sprintf(UART_TxData, "%.2f", speed_measured);
-	mergearray(speed_name, UART_TxData, place_holder, info_speed, 6, 6, 0);
+	if (is_info == 0){
+		mergearray("type ", "cmmd", "", info_type, 5, 4, 0);
+	} else{
+		mergearray("type ", "info", "", info_type, 5, 4, 0);
+	}
 
-	mergearray(info_steer, info_speed, place_holder, info_out, 13, 12, 0);
+	mergearray(info_steer, info_speed, info_type, info_out, 13, 13, 9);
 
 	HAL_UART_Transmit(&huart6, info_out, sizeof(info_out), 10); // Sending in normal mode
 }
@@ -201,8 +207,8 @@ void handle_manual_command(){
 }
 
 void compute_throttle(){
-	float speed_kp = 0.04;
-	float speed_kc = 0.08;
+	float speed_kp = 0.10;
+	float speed_kc = 0.05;
 
 	if (speed_desired == 0.0){
 		throttle = 0.0;
@@ -314,20 +320,40 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		send_command();
 	}
 
-	// 40Hz - 25ms;
-	if (htim == &htim7 && app.control_mode == 1){
-	     send_gokart_info();
+	// 40Hz - 25ms
+	if (htim == &htim7){
+		 // the current gokart drive state information
+	     send_gokart_info(steer_measured, speed_measured, 1);
 	}
 
-	// 5Hz - 200ms;
+	// 10Hz - 100ms
 	if (htim == &htim10){
-		speed_measured = speed_accumu / 360.0 * wheel_diameter * 3.14 / 0.2;
+		speed_measured = speed_accumu / 360.0 * wheel_diameter * 3.14 / 0.1;
 		speed_accumu = 0.0;
 	}
 
 	// 5Hz - 200ms
 	if (htim == &htim11){
-		print_info();
+		 print_info();
+	}
+
+	// 1000Hz - 1ms (only accurate for speed < 35m/s)
+	if (htim == &htim13){
+		speed_sensor_val = HAL_GPIO_ReadPin(GPIOG, Speed_Sensor_Pin);
+
+		// we have a new magnet passing through
+		if(speed_sensor_val != speed_sensor_pre){
+			speed_accumu += 18.0; // 10 magnets (360/10/2 = 18 degrees per switch)
+			speed_sensor_pre = speed_sensor_val;
+		}
+	}
+
+	// 10Hz - 100ms
+	if(htim == &htim14){
+		// the current gokart drive command information
+		// this is used for later tracking and error analysis
+		// therefore sent at much lower frequency
+	    send_gokart_info(steer_desired, speed_desired, 0);
 	}
 }
 
@@ -372,6 +398,8 @@ int main(void)
   MX_TIM7_Init();
   MX_TIM10_Init();
   MX_TIM11_Init();
+  MX_TIM13_Init();
+  MX_TIM14_Init();
   /* USER CODE BEGIN 2 */
 
   main_app = &app;
@@ -386,12 +414,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  int speed_sensor_val = HAL_GPIO_ReadPin(GPIOG, Speed_Sensor_Pin);
 
-	  if(speed_sensor_val != speed_sensor_pre){
-		  speed_accumu += 36.0; // 10 magnets (36 degrees per gap)
-		  speed_sensor_pre = speed_sensor_val;
-	  }
   }
     /* USER CODE END WHILE */
 
@@ -762,9 +785,9 @@ static void MX_TIM10_Init(void)
 
   /* USER CODE END TIM10_Init 1 */
   htim10.Instance = TIM10;
-  htim10.Init.Prescaler = 1344-1;
+  htim10.Init.Prescaler = 336-1;
   htim10.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim10.Init.Period = 25000;
+  htim10.Init.Period = 50000;
   htim10.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim10.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim10) != HAL_OK)
@@ -805,6 +828,68 @@ static void MX_TIM11_Init(void)
   /* USER CODE BEGIN TIM11_Init 2 */
   HAL_TIM_Base_Start_IT(&htim11);
   /* USER CODE END TIM11_Init 2 */
+
+}
+
+/**
+  * @brief TIM13 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM13_Init(void)
+{
+
+  /* USER CODE BEGIN TIM13_Init 0 */
+
+  /* USER CODE END TIM13_Init 0 */
+
+  /* USER CODE BEGIN TIM13_Init 1 */
+
+  /* USER CODE END TIM13_Init 1 */
+  htim13.Instance = TIM13;
+  htim13.Init.Prescaler = 168-1;
+  htim13.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim13.Init.Period = 1000;
+  htim13.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim13.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim13) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM13_Init 2 */
+  HAL_TIM_Base_Start_IT(&htim13);
+  /* USER CODE END TIM13_Init 2 */
+
+}
+
+/**
+  * @brief TIM14 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM14_Init(void)
+{
+
+  /* USER CODE BEGIN TIM14_Init 0 */
+
+  /* USER CODE END TIM14_Init 0 */
+
+  /* USER CODE BEGIN TIM14_Init 1 */
+
+  /* USER CODE END TIM14_Init 1 */
+  htim14.Instance = TIM14;
+  htim14.Init.Prescaler = 672-1;
+  htim14.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim14.Init.Period = 25000;
+  htim14.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim14.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim14) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM14_Init 2 */
+  HAL_TIM_Base_Start_IT(&htim14);
+  /* USER CODE END TIM14_Init 2 */
 
 }
 
