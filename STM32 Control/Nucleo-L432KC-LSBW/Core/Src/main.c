@@ -89,16 +89,15 @@ double error = 0.0;
 double error_prev = 0.0;
 double error_max = 10.0;
 
-double kp_e = 0.40;
+double kp_e = 0.50;
 double kd_e = 1.00;
 
 double steer_measured = 0.0;
 double steer_desired = 0.0;
-double steer_offset = 157.0;
+double steer_offset = 156.0;
 double steer_max = 50.0;
 
 double current = 0.0;
-double angle_compensation = 0.0;
 double current_multiplier = 1.5; // for multip-surface friction adjustment
 double current_max = 15.0;
 
@@ -153,11 +152,7 @@ void compute_current(){
 		error_bound = -error_max;
 	}
 
-	if (fabs(steer_desired) > 5.0){
-		angle_compensation = 3.0 * (steer_desired / steer_max);
-	} else{
-		angle_compensation = 0.0;
-	}
+	double angle_compensation = 2.0 * (steer_desired / steer_max);
 
     current = error_bound * kp_e + (error - error_prev) * kd_e + angle_compensation;
     current *= current_multiplier;
