@@ -94,7 +94,7 @@ double kd_e = 1.00;
 
 double steer_measured = 0.0;
 double steer_desired = 0.0;
-double steer_offset = 156.0;
+double steer_offset = -107.8;
 double steer_max = 50.0;
 
 double current = 0.0;
@@ -156,6 +156,7 @@ void compute_current(){
 
     current = error_bound * kp_e + (error - error_prev) * kd_e + angle_compensation;
     current *= current_multiplier;
+    current = -current;
 
     if (current > current_max){
     	current = current_max;

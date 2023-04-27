@@ -82,6 +82,8 @@ float brake_desired = 0.0;
 float brake_measured = 0.0;
 float brake_max = 150.0;
 
+float teleop_brake = 0.0;
+
 float wheel_diameter = 0.27;
 
 app_state_t app;
@@ -188,9 +190,9 @@ void handle_remote_command(){
 	}
 
 	if(acc_percent > 0.00){
-		brake_desired = 0.0;
+		teleop_brake = 0.0;
 	} else{
-		brake_desired = -acc_percent * brake_max;
+		teleop_brake = -acc_percent * brake_max;
 	}
 
 	steer_desired = steer_percent * steer_max;
@@ -215,6 +217,20 @@ void compute_throttle(){
 	} else{
 		float speed_error = speed_desired - speed_measured;
 		throttle = speed_kp * speed_error + speed_kc * speed_desired;
+	}
+}
+
+void compute_brake(){
+	float speed_error = speed_desired - speed_measured;
+
+	if (speed_error < -1.5){
+		brake_desired = (-speed_error - 1.5) * brake_max / 2;
+	} else{
+		brake_desired = 0.0;
+	}
+
+	if (teleop_brake > brake_desired){
+		brake_desired = teleop_brake;
 	}
 }
 
@@ -315,6 +331,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		}
 
 		compute_throttle();
+		compute_brake();
 		cast_command();
 		check_switch();
 		send_command();
