@@ -43,8 +43,8 @@
 /* Private variables ---------------------------------------------------------*/
 CAN_HandleTypeDef hcan1;
 
-TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim6;
+TIM_HandleTypeDef htim7;
 
 UART_HandleTypeDef huart2;
 
@@ -56,9 +56,9 @@ UART_HandleTypeDef huart2;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
-static void MX_TIM1_Init(void);
 static void MX_CAN1_Init(void);
 static void MX_TIM6_Init(void);
+static void MX_TIM7_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -88,23 +88,28 @@ float vel_pre = 0.0;
 float kp_v = 20.0;
 float kd_v = 2.0;
 
-float angle_desired = 0.0;
-float angle_measured = 0.0;
+float steer_desired = 0.0;
+float steer_measured = 0.0;
 float angle_pre = 0.0;
 float angle_vel = 0.0;
 
-int encoder_val = 1;
-int encoder_pre = 1;
+float steer_max = 50.0;
+
+int encoder_val_a = 0;
+int encoder_val_b = 0;
+int encoder_val_a_pre = 0;
+int encoder_val_b_pre = 0;
 
 int duty_cycle = 0;
-int direction = 1;
 
 float cycle_time = 0.02;
 float look_ahead_time = 0.3;
 
-int gear_ratio = 100;
-int encoder_count = 0;
+int gear_ratio = 102.08;
 
+float encoder_count = 0.0;
+
+float counter = 0.0;
 
 int _write(int file, char *ptr, int len){
 	HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, HAL_MAX_DELAY);
@@ -120,7 +125,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
 
   if ((RxHeader.StdId == 0x100))
   {
-	  angle_desired = (float)CAN_RxData[0] - 55.0;
+	  steer_desired = (float)CAN_RxData[0] - steer_max;
   }
 }
 
@@ -139,55 +144,66 @@ float wrap_to_pi(float angle){
 	return new_angle;
 }
 
-// Timer interrupt every 20ms (frequency = 50Hz)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-
+	// 40Hz = 25ms
 	if (htim == &htim6) {
-		angle_measured = 360.0 / (32.0 * gear_ratio) * encoder_count;
-		angle_measured = wrap_to_pi(angle_measured);
+		steer_measured = 360.0 / (32 * gear_ratio) * encoder_count;
+		steer_measured = wrap_to_pi(steer_measured);
 
-		printf("encoder count %d \r\n", encoder_count);
-//		 printf("angle measured %.2f \r\n", angle_measured);
-		printf("angle desired %.2f \r\n", angle_desired);
+		float steer_transmit = -steer_measured;
 
-		angle_vel = (angle_measured - angle_pre) / cycle_time;
-		angle_pre = angle_measured;
-
-		float angle_pred = angle_measured + look_ahead_time * angle_vel;
-
-		error = angle_desired - angle_pred;
-
-		float delta_update = kp_e * error / 360.0 + kd_e * (error - error_pre) / 360.0;
-
-		error_pre = error;
-
-		vel += delta_update;
-
-		if (vel > 5.0){
-			vel = 5.0;
-		} else if (vel < -5.0){
-			vel = -5.0;
+		if (steer_transmit > steer_max){
+			steer_transmit = steer_max;
+		} else if (steer_transmit < -steer_max){
+			steer_transmit = -steer_max;
 		}
 
-		duty_cycle = (int)(kp_v * vel) + (int)(kd_v * (vel - vel_pre));
+		// send measured steering angle on canbus
+		CAN_TxData[0] = (int)(steer_transmit + steer_max);
+	    HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
 
-		vel_pre = vel;
+//		error = steer_desired - steer_measured;
+//		duty_cycle = (int)(kp_v * vel) + (int)(kd_v * (vel - vel_pre));
 
 //		if (duty_cycle > -50 && duty_cycle < 50){
 //			duty_cycle = 0;
 //		}
 
-		if(duty_cycle < 0){
-			direction = 0;
+//		if(duty_cycle < 0){
+//			TIM1->CCR1 = -duty_cycle;
+//			TIM1->CCR2 = 0;
+//		}
+//		else{
+//			TIM1->CCR1 = 0;
+//			TIM1->CCR2 = duty_cycle;
+//		}
+	}
 
-			TIM1->CCR1 = -duty_cycle;
-			TIM1->CCR2 = 0;
+	// 0.05ms = 20000Hz
+	if(htim == &htim7){
+		encoder_val_a = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6);
+		encoder_val_b = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_5);
+
+		if (encoder_val_a == 1){
+			if (encoder_val_b == 1 && encoder_val_b_pre == 0){
+				encoder_count += 1.0;
+				encoder_val_b_pre = 1.0;
+			}
+			else if (encoder_val_b == 0 && encoder_val_b_pre == 1){
+				encoder_count -= 1.0;
+				encoder_val_b_pre = 0.0;
+			}
 		}
-		else{
-			direction = 1;
 
-			TIM1->CCR1 = 0;
-			TIM1->CCR2 = duty_cycle;
+		if (encoder_val_a == 0){
+			if (encoder_val_b == 1 && encoder_val_b_pre == 0){
+				encoder_count -= 1.0;
+				encoder_val_b_pre = 1.0;
+			}
+			else if (encoder_val_b == 0 && encoder_val_b_pre == 1){
+				encoder_count += 1.0;
+				encoder_val_b_pre = 0.0;
+			}
 		}
 	}
 }
@@ -223,9 +239,9 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
-  MX_TIM1_Init();
   MX_CAN1_Init();
   MX_TIM6_Init();
+  MX_TIM7_Init();
   /* USER CODE BEGIN 2 */
 
   HAL_CAN_Start(&hcan1);
@@ -233,10 +249,8 @@ int main(void)
 
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
 
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-
-  HAL_TIM_Base_Start_IT(&htim6);
+//  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+//  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
 
   /* USER CODE END 2 */
 
@@ -244,17 +258,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  encoder_val = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6);
-
-	  if (encoder_val != encoder_pre){
-		  if(direction){
-			  encoder_count += 1;
-		  } else{
-			  encoder_count -= 1;
-		  }
-	  }
-
-	  encoder_pre = encoder_val;
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -360,9 +363,9 @@ static void MX_CAN1_Init(void)
   canfilterconfig.FilterActivation = CAN_FILTER_ENABLE;
   canfilterconfig.FilterBank = 10;  // which filter bank to use from the assigned ones
   canfilterconfig.FilterFIFOAssignment = CAN_FILTER_FIFO0;
-  canfilterconfig.FilterIdHigh = 0x104<<5;
+  canfilterconfig.FilterIdHigh = 0;
   canfilterconfig.FilterIdLow = 0x0000;
-  canfilterconfig.FilterMaskIdHigh = 0x104<<5;
+  canfilterconfig.FilterMaskIdHigh = 0;
   canfilterconfig.FilterMaskIdLow = 0x0000;
   canfilterconfig.FilterMode = CAN_FILTERMODE_IDMASK;
   canfilterconfig.FilterScale = CAN_FILTERSCALE_32BIT;
@@ -371,80 +374,6 @@ static void MX_CAN1_Init(void)
   HAL_CAN_ConfigFilter(&hcan1, &canfilterconfig);
 
   /* USER CODE END CAN1_Init 2 */
-
-}
-
-/**
-  * @brief TIM1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM1_Init(void)
-{
-
-  /* USER CODE BEGIN TIM1_Init 0 */
-
-  /* USER CODE END TIM1_Init 0 */
-
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
-  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
-
-  /* USER CODE BEGIN TIM1_Init 1 */
-
-  /* USER CODE END TIM1_Init 1 */
-  htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 160-1;
-  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 500;
-  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim1.Init.RepetitionCounter = 0;
-  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
-  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
-  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
-  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
-  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 0;
-  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
-  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
-  sBreakDeadTimeConfig.BreakFilter = 0;
-  sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
-  sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
-  sBreakDeadTimeConfig.Break2Filter = 0;
-  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
-  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM1_Init 2 */
-
-  /* USER CODE END TIM1_Init 2 */
-  HAL_TIM_MspPostInit(&htim1);
 
 }
 
@@ -468,7 +397,7 @@ static void MX_TIM6_Init(void)
   htim6.Instance = TIM6;
   htim6.Init.Prescaler = 16-1;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 20000;
+  htim6.Init.Period = 25000;
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
   {
@@ -481,8 +410,46 @@ static void MX_TIM6_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM6_Init 2 */
-
+  HAL_TIM_Base_Start_IT(&htim6);
   /* USER CODE END TIM6_Init 2 */
+
+}
+
+/**
+  * @brief TIM7 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM7_Init(void)
+{
+
+  /* USER CODE BEGIN TIM7_Init 0 */
+
+  /* USER CODE END TIM7_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM7_Init 1 */
+
+  /* USER CODE END TIM7_Init 1 */
+  htim7.Instance = TIM7;
+  htim7.Init.Prescaler = 16-1;
+  htim7.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim7.Init.Period = 50;
+  htim7.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim7) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim7, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM7_Init 2 */
+  HAL_TIM_Base_Start_IT(&htim7);
+  /* USER CODE END TIM7_Init 2 */
 
 }
 
@@ -538,8 +505,8 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, Motor_Enable_Pin|LD3_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : PA6 PA10 */
-  GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_10;
+  /*Configure GPIO pins : PA5 PA6 PA10 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_10;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);

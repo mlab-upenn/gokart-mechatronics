@@ -67,7 +67,13 @@ int speed_sensor_val = 0;
 int speed_sensor_pre = 0;
 
 float throttle = 0.0;
-float throttle_max = 0.5;
+float throttle_max = 1.0;
+
+float speed_window1 = 0.0;
+float speed_window2 = 0.0;
+float speed_window3 = 0.0;
+float speed_window4 = 0.0;
+float speed_window5 = 0.0;
 
 float speed_measured = 0.0;
 float speed_desired = 0.0;
@@ -76,7 +82,9 @@ float speed_accumu = 0.0;
 
 float steer_desired = 0.0;
 float steer_measured = 0.0;
-float steer_max = 50.0;
+float steer_max = 55.0;
+
+float steering_wheel = 0.0;
 
 float brake_desired = 0.0;
 float brake_measured = 0.0;
@@ -205,12 +213,25 @@ void handle_autonomous_command(){
 }
 
 void handle_manual_command(){
-
+	steer_desired = steering_wheel;
 }
 
 void compute_throttle(){
-	float speed_kp = 0.10;
-	float speed_kc = 0.05;
+	float speed_kp = 0.12;
+	float speed_kc = 0.10;
+
+	if(gokart_mode == 2){
+		HAL_ADC_Start(&hadc1);
+		HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+
+		throttle = HAL_ADC_GetValue(&hadc1) / 4095.0 * throttle_max;
+
+		if (throttle < 0.05){
+			throttle = 0.00;
+		}
+
+		return;
+	}
 
 	if (speed_desired == 0.0){
 		throttle = 0.0;
@@ -222,6 +243,11 @@ void compute_throttle(){
 
 void compute_brake(){
 	float speed_error = speed_desired - speed_measured;
+
+	if(gokart_mode == 2){
+		brake_desired = 0.0;
+		return;
+	}
 
 	if (speed_error < -1.5){
 		brake_desired = (-speed_error - 1.5) * brake_max / 2;
@@ -290,12 +316,13 @@ void print_info(){
 		printf("gokart status: on \r\n\n");
 	}
 
-	printf("steer desired %.2f  ", steer_desired);
+	printf("steer desired %.2f ", steer_desired);
 	printf("steer measured %.2f \r\n", steer_measured);
-	printf("brake desired %.2f  ", brake_desired);
+	printf("brake desired %.2f ", brake_desired);
 	printf("brake measured %.2f \r\n", brake_measured);
 	printf("speed desired %.2f  ", speed_desired);
 	printf("speed measured %.2f \r\n", speed_measured);
+	printf("throt desired %.2f \r\n", throttle);
 	printf("\r\n");
 }
 
@@ -309,6 +336,11 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
   if (RxHeader.StdId == 0x101)
   {
 	  steer_measured = CAN_RxData[0] - steer_max;
+  }
+
+  if (RxHeader.StdId == 0x102)
+  {
+	  steering_wheel = CAN_RxData[0] - steer_max;
   }
 
   if (RxHeader.StdId == 0x103)
@@ -345,8 +377,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 
 	// 10Hz - 100ms
 	if (htim == &htim10){
-		speed_measured = speed_accumu / 360.0 * wheel_diameter * 3.14 / 0.1;
+		// sliding window approach to smooth out deviation
+		speed_window5 = speed_window4;
+		speed_window4 = speed_window3;
+		speed_window3 = speed_window2;
+		speed_window2 = speed_window1;
+		speed_window1 = speed_accumu / 360.0 * wheel_diameter * 3.14 / 0.1;
+
 		speed_accumu = 0.0;
+		speed_measured = (speed_window1 + speed_window2 + speed_window3 + speed_window4 + speed_window5) / 5.0;
 	}
 
 	// 5Hz - 200ms
@@ -930,7 +969,7 @@ static void MX_USART2_UART_Init(void)
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
-  huart2.Init.Mode = UART_MODE_RX;
+  huart2.Init.Mode = UART_MODE_TX_RX;
   huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
   huart2.Init.OverSampling = UART_OVERSAMPLING_16;
   if (HAL_UART_Init(&huart2) != HAL_OK)

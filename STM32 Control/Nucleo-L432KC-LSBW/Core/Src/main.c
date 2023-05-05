@@ -95,11 +95,11 @@ double kd_e = 1.00;
 double steer_measured = 0.0;
 double steer_desired = 0.0;
 double steer_offset = -107.8;
-double steer_max = 50.0;
+double steer_max = 55.0;
 
 double current = 0.0;
-double current_multiplier = 1.5; // for multip-surface friction adjustment
-double current_max = 15.0;
+double current_multiplier = 1.8; // for multip-surface friction adjustment
+double current_max = 18.0;
 
 
 // uart print to serial terminal for debugging purpose
