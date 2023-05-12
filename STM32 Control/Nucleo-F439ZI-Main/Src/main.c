@@ -67,7 +67,7 @@ int speed_sensor_val = 0;
 int speed_sensor_pre = 0;
 
 float throttle = 0.0;
-float throttle_max = 1.0;
+float throttle_max = 0.8;
 
 float speed_window1 = 0.0;
 float speed_window2 = 0.0;
@@ -287,7 +287,7 @@ void send_command(){
     HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
 
 	// Set throttle signal PWM
-    TIM1->CCR1 = 145 - (int)(145.0 * throttle);
+    TIM1->CCR1 = 150 - (int)(150.0 * throttle);
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 }
 
