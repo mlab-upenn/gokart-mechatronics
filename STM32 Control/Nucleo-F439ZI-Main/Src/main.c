@@ -217,8 +217,8 @@ void handle_manual_command(){
 }
 
 void compute_throttle(){
-	float speed_kp = 0.12;
-	float speed_kc = 0.10;
+	float speed_kp = 0.15;
+	float speed_kc = 0.15;
 
 	if(gokart_mode == 2){
 		HAL_ADC_Start(&hadc1);
