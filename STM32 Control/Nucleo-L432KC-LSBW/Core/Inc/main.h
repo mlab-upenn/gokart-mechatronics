@@ -59,6 +59,7 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define SPI1_NSS_MANUAL_Pin GPIO_PIN_4
 #define SPI1_NSS_MANUAL_GPIO_Port GPIOA
+
 /* USER CODE BEGIN Private defines */
 
 #define VESC_UART &huart1

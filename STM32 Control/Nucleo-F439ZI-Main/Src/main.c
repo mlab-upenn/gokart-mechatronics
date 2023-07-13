@@ -33,6 +33,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+void compute_auto_brake();
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -52,8 +55,6 @@ TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim7;
 TIM_HandleTypeDef htim10;
 TIM_HandleTypeDef htim11;
-TIM_HandleTypeDef htim13;
-TIM_HandleTypeDef htim14;
 
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
@@ -61,24 +62,12 @@ UART_HandleTypeDef huart6;
 
 /* USER CODE BEGIN PV */
 int gokart_mode = 0;
-int gokart_status = 0;
+int motor_direction = 0;
 
-int speed_sensor_val = 0;
-int speed_sensor_pre = 0;
-
-float throttle = 0.0;
-float throttle_max = 0.8;
-
-float speed_window1 = 0.0;
-float speed_window2 = 0.0;
-float speed_window3 = 0.0;
-float speed_window4 = 0.0;
-float speed_window5 = 0.0;
+float throttle_desired = 0.0;
 
 float speed_measured = 0.0;
 float speed_desired = 0.0;
-float speed_max = 6.0;
-float speed_accumu = 0.0;
 
 float steer_desired = 0.0;
 float steer_measured = 0.0;
@@ -89,10 +78,6 @@ float steering_wheel = 0.0;
 float brake_desired = 0.0;
 float brake_measured = 0.0;
 float brake_max = 150.0;
-
-float teleop_brake = 0.0;
-
-float wheel_diameter = 0.27;
 
 app_state_t app;
 app_state_t *main_app;
@@ -123,8 +108,6 @@ static void MX_I2C1_Init(void);
 static void MX_TIM7_Init(void);
 static void MX_TIM10_Init(void);
 static void MX_TIM11_Init(void);
-static void MX_TIM13_Init(void);
-static void MX_TIM14_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -189,18 +172,21 @@ void send_gokart_info(float steer, float speed, int is_info){
 
 void handle_remote_command(){
 	float acc_percent = app.acc_percent;
+	float gear_shift = app.gokart_status;
 	float steer_percent = app.steer_percent;
 
-	if (acc_percent < 0.00){
-		speed_desired = 0.00;
+	if(acc_percent > 0.00){
+		throttle_desired = acc_percent * 100.0;
+		brake_desired = 0.0;
 	} else{
-		speed_desired = acc_percent * speed_max;
+		throttle_desired = 0.0;
+		brake_desired = -acc_percent * brake_max;
 	}
 
-	if(acc_percent > 0.00){
-		teleop_brake = 0.0;
+	if (gear_shift == 0){
+		motor_direction = 0;
 	} else{
-		teleop_brake = -acc_percent * brake_max;
+		motor_direction = 1;
 	}
 
 	steer_desired = steer_percent * steer_max;
@@ -208,55 +194,22 @@ void handle_remote_command(){
 
 void handle_autonomous_command(){
 	uint8_t place_holder[10];
-
 	sscanf(drive_msg, "%s %f %s %f", place_holder, &steer_desired, place_holder, &speed_desired);
+
+	compute_auto_brake();
 }
 
 void handle_manual_command(){
 	steer_desired = steering_wheel;
 }
 
-void compute_throttle(){
-	float speed_kp = 0.15;
-	float speed_kc = 0.15;
-
-	if(gokart_mode == 2){
-		HAL_ADC_Start(&hadc1);
-		HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
-
-		throttle = HAL_ADC_GetValue(&hadc1) / 4095.0 * throttle_max;
-
-		if (throttle < 0.05){
-			throttle = 0.00;
-		}
-
-		return;
-	}
-
-	if (speed_desired == 0.0){
-		throttle = 0.0;
-	} else{
-		float speed_error = speed_desired - speed_measured;
-		throttle = speed_kp * speed_error + speed_kc * speed_desired;
-	}
-}
-
-void compute_brake(){
+void compute_auto_brake(){
 	float speed_error = speed_desired - speed_measured;
-
-	if(gokart_mode == 2){
-		brake_desired = 0.0;
-		return;
-	}
 
 	if (speed_error < -1.5){
 		brake_desired = (-speed_error - 1.5) * brake_max / 2;
 	} else{
 		brake_desired = 0.0;
-	}
-
-	if (teleop_brake > brake_desired){
-		brake_desired = teleop_brake;
 	}
 }
 
@@ -267,16 +220,16 @@ void cast_command(){
 		steer_desired = -steer_max;
 	}
 
-	if (throttle > throttle_max){
-		throttle = throttle_max;
-	} else if (throttle < 0.0){
-		throttle = 0.0;
-	}
-
 	if (brake_desired > brake_max){
 		brake_desired = brake_max;
 	} else if (brake_desired < 0.0){
 		brake_desired = 0.0;
+	}
+
+	if (throttle_desired > 100.0){
+		throttle_desired = 100.0;
+	} else if (throttle_desired < 0.0){
+		throttle_desired = 0.0;
 	}
 }
 
@@ -284,21 +237,10 @@ void send_command(){
 	// Send CANBus command
 	CAN_TxData[0] = (int)(steer_desired + steer_max);
 	CAN_TxData[1] = (int)(brake_desired);
+	CAN_TxData[2] = (int)(throttle_desired);
+	CAN_TxData[3] = (int)(motor_direction);
+
     HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
-
-	// Set throttle signal PWM
-    TIM1->CCR1 = 150 - (int)(150.0 * throttle);
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-}
-
-void check_switch(){
-	gokart_status = app.gokart_status;
-
-	if (gokart_status == 0){
-		steer_desired = 0.0;
-		throttle = 0.0;
-		brake_desired = brake_max;
-	}
 }
 
 void print_info(){
@@ -310,19 +252,19 @@ void print_info(){
 		printf("mode: manual \r\n");
 	}
 
-	if (gokart_status == 0){
-		printf("gokart status: off \r\n\n");
+	if (motor_direction == 0){
+		printf("motor_direction: reverse \r\n\n");
 	} else{
-		printf("gokart status: on \r\n\n");
+		printf("motor_direction: forward \r\n");
 	}
 
+	printf("throttle desired %.2f \r\n\n", throttle_desired);
 	printf("steer desired %.2f ", steer_desired);
 	printf("steer measured %.2f \r\n", steer_measured);
 	printf("brake desired %.2f ", brake_desired);
 	printf("brake measured %.2f \r\n", brake_measured);
 	printf("speed desired %.2f  ", speed_desired);
 	printf("speed measured %.2f \r\n", speed_measured);
-	printf("throt desired %.2f \r\n", throttle);
 	printf("\r\n");
 }
 
@@ -335,22 +277,27 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
 
   if (RxHeader.StdId == 0x101)
   {
-	  steer_measured = CAN_RxData[0] - steer_max;
+	  speed_measured = CAN_RxData[0] / 10.0;
   }
 
   if (RxHeader.StdId == 0x102)
   {
-	  steering_wheel = CAN_RxData[0] - steer_max;
+	  brake_measured = CAN_RxData[0];
   }
 
   if (RxHeader.StdId == 0x103)
   {
-	  brake_measured = CAN_RxData[0];
+	  steer_measured = CAN_RxData[0] - steer_max;
+  }
+
+  if (RxHeader.StdId == 0x104)
+  {
+	  steering_wheel = CAN_RxData[0] - steer_max;
   }
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	// 40Hz - 25ms;
+	// 40Hz - 25ms handle gokart command and send to subsystems
 	if (htim == &htim6) {
 		gokart_mode = app.control_mode;
 
@@ -362,54 +309,24 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 			handle_manual_command();
 		}
 
-		compute_throttle();
-		compute_brake();
 		cast_command();
-		check_switch();
 		send_command();
 	}
 
-	// 40Hz - 25ms
+	// 40Hz - 25ms send out gokart drive info to higher level device
 	if (htim == &htim7){
 		 // the current gokart drive state information
 	     send_gokart_info(steer_measured, speed_measured, 1);
 	}
 
-	// 10Hz - 100ms
-	if (htim == &htim10){
-		// sliding window approach to smooth out deviation
-		speed_window5 = speed_window4;
-		speed_window4 = speed_window3;
-		speed_window3 = speed_window2;
-		speed_window2 = speed_window1;
-		speed_window1 = speed_accumu / 360.0 * wheel_diameter * 3.14 / 0.1;
-
-		speed_accumu = 0.0;
-		speed_measured = (speed_window1 + speed_window2 + speed_window3 + speed_window4 + speed_window5) / 5.0;
+	// 10Hz - 100ms send out gokart drive command to higher level device
+	if(htim == &htim10){
+	    send_gokart_info(steer_desired, speed_desired, 0);
 	}
 
-	// 5Hz - 200ms
+	// 5Hz - 200ms print gokart info
 	if (htim == &htim11){
 		 print_info();
-	}
-
-	// 1000Hz - 1ms (only accurate for speed < 35m/s)
-	if (htim == &htim13){
-		speed_sensor_val = HAL_GPIO_ReadPin(GPIOG, Speed_Sensor_Pin);
-
-		// we have a new magnet passing through
-		if(speed_sensor_val != speed_sensor_pre){
-			speed_accumu += 18.0; // 10 magnets (360/10/2 = 18 degrees per switch)
-			speed_sensor_pre = speed_sensor_val;
-		}
-	}
-
-	// 10Hz - 100ms
-	if(htim == &htim14){
-		// the current gokart drive command information
-		// this is used for later tracking and error analysis
-		// therefore sent at much lower frequency
-	    send_gokart_info(steer_desired, speed_desired, 0);
 	}
 }
 
@@ -454,15 +371,10 @@ int main(void)
   MX_TIM7_Init();
   MX_TIM10_Init();
   MX_TIM11_Init();
-  MX_TIM13_Init();
-  MX_TIM14_Init();
   /* USER CODE BEGIN 2 */
 
   main_app = &app;
   app_run(&app);
-
-  // Wait time to initialize everything
-  HAL_Delay(500);
 
   /* USER CODE END 2 */
 
@@ -888,68 +800,6 @@ static void MX_TIM11_Init(void)
 }
 
 /**
-  * @brief TIM13 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM13_Init(void)
-{
-
-  /* USER CODE BEGIN TIM13_Init 0 */
-
-  /* USER CODE END TIM13_Init 0 */
-
-  /* USER CODE BEGIN TIM13_Init 1 */
-
-  /* USER CODE END TIM13_Init 1 */
-  htim13.Instance = TIM13;
-  htim13.Init.Prescaler = 168-1;
-  htim13.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim13.Init.Period = 1000;
-  htim13.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim13.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim13) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM13_Init 2 */
-  HAL_TIM_Base_Start_IT(&htim13);
-  /* USER CODE END TIM13_Init 2 */
-
-}
-
-/**
-  * @brief TIM14 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM14_Init(void)
-{
-
-  /* USER CODE BEGIN TIM14_Init 0 */
-
-  /* USER CODE END TIM14_Init 0 */
-
-  /* USER CODE BEGIN TIM14_Init 1 */
-
-  /* USER CODE END TIM14_Init 1 */
-  htim14.Instance = TIM14;
-  htim14.Init.Prescaler = 672-1;
-  htim14.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim14.Init.Period = 25000;
-  htim14.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim14.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim14) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM14_Init 2 */
-  HAL_TIM_Base_Start_IT(&htim14);
-  /* USER CODE END TIM14_Init 2 */
-
-}
-
-/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -969,7 +819,7 @@ static void MX_USART2_UART_Init(void)
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
-  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.Mode = UART_MODE_RX;
   huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
   huart2.Init.OverSampling = UART_OVERSAMPLING_16;
   if (HAL_UART_Init(&huart2) != HAL_OK)
@@ -1056,6 +906,8 @@ static void MX_USART6_UART_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
+/* USER CODE BEGIN MX_GPIO_Init_1 */
+/* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -1138,6 +990,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
   HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
 
+/* USER CODE BEGIN MX_GPIO_Init_2 */
+/* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */

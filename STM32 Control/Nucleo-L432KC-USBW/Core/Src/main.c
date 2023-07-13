@@ -45,6 +45,7 @@ CAN_HandleTypeDef hcan1;
 
 TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim7;
+TIM_HandleTypeDef htim16;
 
 UART_HandleTypeDef huart2;
 
@@ -59,6 +60,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_CAN1_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_TIM7_Init(void);
+static void MX_TIM16_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -74,26 +76,11 @@ uint32_t TxMailbox;
 uint8_t CAN_TxData[8];
 uint8_t CAN_RxData[8];
 
-uint8_t vesc_packet[10];
-
-float error;
-float error_pre = 0.0;
-
-float kp_e = 6.0;
-float kd_e = 2.0;
-
-float vel = 0.0;
-float vel_pre = 0.0;
-
-float kp_v = 20.0;
-float kd_v = 2.0;
-
 float steer_desired = 0.0;
 float steer_measured = 0.0;
-float angle_pre = 0.0;
-float angle_vel = 0.0;
+float steer_max = 55.0;
 
-float steer_max = 50.0;
+float encoder_count = 0.0;
 
 int encoder_val_a = 0;
 int encoder_val_b = 0;
@@ -102,14 +89,7 @@ int encoder_val_b_pre = 0;
 
 int duty_cycle = 0;
 
-float cycle_time = 0.02;
-float look_ahead_time = 0.3;
-
 int gear_ratio = 102.08;
-
-float encoder_count = 0.0;
-
-float counter = 0.0;
 
 int _write(int file, char *ptr, int len){
 	HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, HAL_MAX_DELAY);
@@ -145,41 +125,13 @@ float wrap_to_pi(float angle){
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	// 40Hz = 25ms
+	// 40Hz = 25ms motor control loop
 	if (htim == &htim6) {
 		steer_measured = 360.0 / (32 * gear_ratio) * encoder_count;
 		steer_measured = wrap_to_pi(steer_measured);
-
-		float steer_transmit = -steer_measured;
-
-		if (steer_transmit > steer_max){
-			steer_transmit = steer_max;
-		} else if (steer_transmit < -steer_max){
-			steer_transmit = -steer_max;
-		}
-
-		// send measured steering angle on canbus
-		CAN_TxData[0] = (int)(steer_transmit + steer_max);
-	    HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
-
-//		error = steer_desired - steer_measured;
-//		duty_cycle = (int)(kp_v * vel) + (int)(kd_v * (vel - vel_pre));
-
-//		if (duty_cycle > -50 && duty_cycle < 50){
-//			duty_cycle = 0;
-//		}
-
-//		if(duty_cycle < 0){
-//			TIM1->CCR1 = -duty_cycle;
-//			TIM1->CCR2 = 0;
-//		}
-//		else{
-//			TIM1->CCR1 = 0;
-//			TIM1->CCR2 = duty_cycle;
-//		}
 	}
 
-	// 0.05ms = 20000Hz
+	// 20000Hz = 0.05ms read angle measurement
 	if(htim == &htim7){
 		encoder_val_a = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6);
 		encoder_val_b = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_5);
@@ -205,6 +157,24 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 				encoder_val_b_pre = 0.0;
 			}
 		}
+	}
+
+	// 5Hz = 200ms send angle measurement to can bus
+	if (htim == &htim16){
+		float steer_transmit = -steer_measured;
+
+		if (steer_transmit > steer_max){
+			steer_transmit = steer_max;
+		} else if (steer_transmit < -steer_max){
+			steer_transmit = -steer_max;
+		}
+
+		// send measured steering angle on canbus
+		CAN_TxData[0] = (int)(steer_transmit + steer_max);
+	    HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
+
+	    printf("steering angle desired %.2f \r\n", steer_desired);
+	    printf("steering angle measured %.2f \r\n", steer_measured);
 	}
 }
 
@@ -242,15 +212,13 @@ int main(void)
   MX_CAN1_Init();
   MX_TIM6_Init();
   MX_TIM7_Init();
+  MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
-
-  HAL_CAN_Start(&hcan1);
-  HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
 
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
 
-//  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-//  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+  // HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  // HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
 
   /* USER CODE END 2 */
 
@@ -258,10 +226,11 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
 
-    /* USER CODE BEGIN 3 */
   }
+  /* USER CODE END WHILE */
+
+  /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
 }
 
@@ -328,11 +297,11 @@ static void MX_CAN1_Init(void)
 {
 
   /* USER CODE BEGIN CAN1_Init 0 */
-  TxHeader.DLC = 1;
+  TxHeader.DLC = 4;
   TxHeader.ExtId = 0;
   TxHeader.IDE = CAN_ID_STD;
   TxHeader.RTR = CAN_RTR_DATA;
-  TxHeader.StdId = 0x102;
+  TxHeader.StdId = 0x104;
   TxHeader.TransmitGlobalTime = DISABLE;
 
   /* USER CODE END CAN1_Init 0 */
@@ -372,9 +341,10 @@ static void MX_CAN1_Init(void)
   canfilterconfig.SlaveStartFilterBank = 20;  // how many filters to assign to the CAN1 (master can)
 
   HAL_CAN_ConfigFilter(&hcan1, &canfilterconfig);
+  HAL_CAN_Start(&hcan1);
+  HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
 
   /* USER CODE END CAN1_Init 2 */
-
 }
 
 /**
@@ -454,6 +424,38 @@ static void MX_TIM7_Init(void)
 }
 
 /**
+  * @brief TIM16 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM16_Init(void)
+{
+
+  /* USER CODE BEGIN TIM16_Init 0 */
+
+  /* USER CODE END TIM16_Init 0 */
+
+  /* USER CODE BEGIN TIM16_Init 1 */
+
+  /* USER CODE END TIM16_Init 1 */
+  htim16.Instance = TIM16;
+  htim16.Init.Prescaler = 160-1;
+  htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim16.Init.Period = 20000;
+  htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim16.Init.RepetitionCounter = 0;
+  htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim16) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM16_Init 2 */
+  HAL_TIM_Base_Start_IT(&htim16);
+  /* USER CODE END TIM16_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -496,6 +498,8 @@ static void MX_USART2_UART_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
+/* USER CODE BEGIN MX_GPIO_Init_1 */
+/* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -518,6 +522,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
+/* USER CODE BEGIN MX_GPIO_Init_2 */
+/* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */

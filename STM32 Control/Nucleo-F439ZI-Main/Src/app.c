@@ -41,11 +41,11 @@ static void joy_control_to_control(app_state_t *app){
 	int control_val = app->rc_receiver_state.channels[5].servo_position;
 
 	if (control_val == 1706){
-		app->control_mode = 0;
+		app->control_mode = 2;
 	} else if (control_val == 1024){
 		app->control_mode = 1;
 	} else if (control_val == 342){
-		app->control_mode = 2;
+		app->control_mode = 0;
 	}
 
 	int deadmanswitch = app->rc_receiver_state.channels[4].servo_position;
