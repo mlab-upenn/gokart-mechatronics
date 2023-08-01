@@ -122,47 +122,47 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	// 100Hz = 10ms send out speed control ppm to vesc
-	if (htim == &htim6){
-	  if (motor_direction == 1){
-		  TIM1->CCR1 = throttle_desired/2 + 150;
-	  } else{
-		  TIM1->CCR1 = -throttle_desired/2 + 150;
-	  }
+	// if (htim == &htim6){
+	//   if (motor_direction == 1){
+	// 	  TIM1->CCR1 = throttle_desired/2 + 150;
+	//   } else{
+	// 	  TIM1->CCR1 = -throttle_desired/2 + 150;
+	//   }
 
-	  // send out speed control ppm
-	  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  }
+	//   // send out speed control ppm
+	//   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  // }
 
   // 1000Hz = 1ms read speed sensor for speed measurement
-  if (htim == &htim7){
-	  speed_sensor_val = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6);
+  // if (htim == &htim7){
+	//   speed_sensor_val = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6);
 
-	  // we have a new magnet passing through
-	  if(speed_sensor_val != speed_sensor_pre){
-		  speed_accumu += 18.0; // 10 magnets (360/10/2 = 18 degrees per switch)
-		  speed_sensor_pre = speed_sensor_val;
-	  }
-  }
+	//   // we have a new magnet passing through
+	//   if(speed_sensor_val != speed_sensor_pre){
+	// 	  speed_accumu += 18.0; // 10 magnets (360/10/2 = 18 degrees per switch)
+	// 	  speed_sensor_pre = speed_sensor_val;
+	//   }
+  // }
 
   // 5Hz = 200ms compute speed using sliding window and send out info
-  if (htim == &htim16){
-	  speed_window5 = speed_window4;
-	  speed_window4 = speed_window3;
-	  speed_window3 = speed_window2;
-	  speed_window2 = speed_window1;
-	  speed_window1 = speed_accumu / 360.0 * wheel_diameter * 3.14 / 0.1;
+  // if (htim == &htim16){
+	//   speed_window5 = speed_window4;
+	//   speed_window4 = speed_window3;
+	//   speed_window3 = speed_window2;
+	//   speed_window2 = speed_window1;
+	//   speed_window1 = speed_accumu / 360.0 * wheel_diameter * 3.14 / 0.1;
 
-	  speed_accumu = 0.0;
-	  speed_measured = (speed_window1 + speed_window2 + speed_window3 + speed_window4 + speed_window5) / 5.0;
+	//   speed_accumu = 0.0;
+	//   speed_measured = (speed_window1 + speed_window2 + speed_window3 + speed_window4 + speed_window5) / 5.0;
 
-	  // send out measured speed to can bus
-	  CAN_TxData[0] = (int)(speed_measured * 10.0);
-	  HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
+	//   // send out measured speed to can bus
+	//   CAN_TxData[0] = (int)(speed_measured * 10.0);
+	//   HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &TxMailbox);
 
 	  printf("throttle desired: %d \r\n", throttle_desired);
 	  printf("motor direction: %d \r\n", motor_direction);
-	  printf("speed measured %.2f m/s \r\n", speed_measured);
-  }
+	  // printf("speed measured %.2f m/s \r\n", speed_measured);
+  // }g
 }
 
 /* USER CODE END 0 */
